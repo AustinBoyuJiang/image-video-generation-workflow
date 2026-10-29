@@ -3,14 +3,19 @@
 Neither input images nor encoded videos are written to a filesystem path.
 The ComfyUI process is reaped after each job to release all remaining media.
 """
+import ctypes
 import io
 import re
+import resource
 
 import numpy as np
 import torch
 from aiohttp import web
 from PIL import Image, ImageOps
 from server import PromptServer
+
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+ctypes.CDLL(None).prctl(4, 0, 0, 0, 0)
 
 
 INPUTS = {}

@@ -565,13 +565,27 @@ if __name__ == "__main__":
     import socket
     import uvicorn
     logging.getLogger("uvicorn.access").disabled = True
+    socket_path = os.environ.get("STUDIO_SOCKET_PATH")
     sockets = []
-    for port in (PORT,):
+    if socket_path:
+        path = Path(socket_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.bind(socket_path)
+        os.chmod(socket_path, 0o600)
+        sock.listen(2048)
+        sockets.append(sock)
+    else:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("127.0.0.1", port))
+        sock.bind(("127.0.0.1", PORT))
         sock.listen(2048)
         sockets.append(sock)
     config = uvicorn.Config(app, host="127.0.0.1", port=PORT, access_log=False,
                             server_header=False, log_level="warning", timeout_graceful_shutdown=3)
-    asyncio.run(uvicorn.Server(config).serve(sockets=sockets))
+    try:
+        asyncio.run(uvicorn.Server(config).serve(sockets=sockets))
+    finally:
+        if socket_path:
+            Path(socket_path).unlink(missing_ok=True)

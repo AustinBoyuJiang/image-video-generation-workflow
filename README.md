@@ -35,6 +35,14 @@ This hardware profile is tested, not a minimum requirement. A single GPU can be 
 
 `setup.sh` installs two virtual environments, checks out the pinned ComfyUI commit, and installs the custom RAM bridge. It uses PyTorch CUDA 12.8 wheels by default. Set `PYTHON_BIN` or `TORCH_INDEX_URL` before running it if your platform needs different values; changing the Torch build may affect H3 compatibility.
 
+For a reverse proxy on the same host, set `STUDIO_SOCKET_PATH` to keep the backend off TCP entirely:
+
+```bash
+STUDIO_SOCKET_PATH=/run/user/$(id -u)/image-video-generation.sock QWEN_GPUS=0,1 ./start.sh
+```
+
+The application creates the Unix socket with mode `0600`. Run the service with `UMask=0077`, `LimitCORE=0`, and `MemorySwapMax=0`, and give only the trusted proxy account access to the socket. The application and GPU workers disable process dumps; the H3 RAM bridge applies the same protection inside ComfyUI. This blocks ordinary media-file access and process attachment by other unprivileged server users. It cannot protect plaintext being processed in memory from a server administrator with root or equivalent debugging privileges.
+
 `download_models.py` downloads only the Qwen components and five H3 weight files used by this workflow. Model repositories and revisions are pinned in `model-lock.json`. The script verifies every weight against its expected byte size and SHA256 digest. It can be rerun after an interrupted download:
 
 ```bash
