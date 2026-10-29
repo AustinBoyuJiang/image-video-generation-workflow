@@ -70,7 +70,7 @@
         <button id="generate" type="submit" class="primary generate"><span id="generate-label">Add to queue</span></button>
         <p id="form-error" class="error" role="alert"></p>
       </form>
-      <div class="sidebar-footer"><p>Inputs and results are held in memory. Closing a tab starts a 3-minute cleanup timer. Clearing this tab removes its batch immediately.</p></div>
+      <div class="sidebar-footer"><p>Inputs and results are held in memory. Running jobs continue if the page disconnects. Closed tabs are retained for 24 hours. Clearing this tab removes its batch immediately.</p></div>
     </aside>
     <section class="canvas-area" aria-label="Output">
       <div class="canvas-top"><span id="canvas-label">Output</span><div class="canvas-actions"><button id="reuse" class="quiet" disabled>Use as input</button><button id="clear" class="quiet" disabled>Clear this tab</button></div></div>

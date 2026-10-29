@@ -53,7 +53,7 @@ The models are downloaded directly from their publishers: [Qwen-Image-2.1](https
 - **New tab:** open an independent workspace. Refreshing a tab recovers its current batch ID. Duplicating a tab gives the copy a new ID.
 - **All jobs:** see queue and GPU status and stop individual jobs.
 
-Qwen images are delivered as lossless WebP and H3 videos as MP4. The browser stores only opaque tab and batch IDs in the URL fragment and `sessionStorage`. Inputs and results are held in process memory; H3 uses `/dev/shm` for its temporary ComfyUI directories. Closing a tab starts a three-minute cleanup window. **Clear this tab** removes that tab's batch immediately. The application has no account system and should not be exposed directly to a public network.
+Qwen images are delivered as lossless WebP and H3 videos as MP4. The browser stores only opaque tab and batch IDs in the URL fragment and `sessionStorage`. Inputs and results are held in process memory; H3 uses `/dev/shm` for its temporary ComfyUI directories. Running jobs continue if the page disconnects, and closed tabs retain completed batches for 24 hours. **Clear this tab** removes that tab's batch immediately. The application has no account system and should not be exposed directly to a public network.
 
 ## Verify
 

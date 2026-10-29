@@ -41,8 +41,8 @@ RUNNER_FACTORY = GpuRunner
 ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{24,80}\Z")
 MAX_QUEUE = 64
 MAX_BATCH = 20
-TAB_LEASE = 3600
-CLOSE_GRACE = 180
+TAB_LEASE = 24 * 3600
+CLOSE_GRACE = 24 * 3600
 CHUNK_SIZE = 49152
 
 
@@ -269,6 +269,10 @@ def expire(now=None):
         if now - upload["touched"] > 900:
             wipe_upload(uid)
     for ident, tab in list(TABS.items()):
+        batch = BATCHES.get(tab.get("job_id"))
+        if batch and any(JOBS.get(job_id, {}).get("stage") not in (None, "done", "error")
+                         for job_id in batch["jobs"]):
+            continue
         detached = tab["detached"]
         if now - tab["touched"] > TAB_LEASE or (detached is not None and now - detached > CLOSE_GRACE):
             clear_tab(ident)

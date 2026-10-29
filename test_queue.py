@@ -85,7 +85,7 @@ async def main():
             await post('/api/batches/status',{'id':bid},hb,404)
             await post('/api/jobs/status',{'id':items[0]['id']},hb,404)
             # Refresh keeps the root batch and all child IDs; late close beacons cannot remove it.
-            ha=headers(a,ident())
+            pa=ident();ha=headers(a,pa)
             restored=(await post('/api/tab/state',{},ha)).json()['batch']
             assert restored['id']==bid and [j['id'] for j in restored['jobs']]==[item['id'] for item in items]
             await post('/api/tab/detach',{'tab_id':a,'page_id':pa},ha)
