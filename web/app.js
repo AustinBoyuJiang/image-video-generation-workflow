@@ -43,7 +43,7 @@ function clearResults(){
   $('reuse').disabled=true;$('clear').disabled=true;$('canvas-label').textContent='Output';$('result-meta').textContent='Qwen-Image-2.1';
 }
 function renderSources(){
-  $('source-list').replaceChildren();$('source-count').textContent=sources.length?'Selected '+sources.length+' images'+(mode==='video'?' · first video frame':' · same prompt for each image'):mode==='video'?'Select one image':'Choose multiple images';
+  $('source-list').replaceChildren();$('source-count').textContent=sources.length?'Selected '+sources.length+' images · same prompt for each '+(mode==='video'?'video':'image'):'Choose multiple images';
   $('clear-sources').hidden=sources.length===0;$('clear-sources').disabled=busy;$('upload').disabled=busy;
   for(const [index,item]of sources.entries()){
     const card=document.createElement('div');card.className='source-card';
@@ -57,14 +57,12 @@ function renderSources(){
 function clearSources(){for(const item of sources)URL.revokeObjectURL(item.url);sources=[];$('upload').value='';renderSources();}
 function addFiles(files){
   const incoming=Array.from(files);$('form-error').textContent='';if(!incoming.length)return;
-  if(mode==='video'&&incoming.length!==1){$('form-error').textContent='Image-to-video requires exactly one image.';return;}
-  if(mode==='video')clearSources();
   if(sources.length+incoming.length>20){$('form-error').textContent='A batch supports up to 20 images. Remove some first.';return;}
   if(incoming.some(file=>!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>12*1024*1024)){$('form-error').textContent='Choose PNG, JPG, or WebP images under 12 MB each.';return;}
   for(const file of incoming)sources.push({blob:file,url:URL.createObjectURL(file),name:file.name||'Result image '+(sources.length+1)});
   $('upload').value='';renderSources();if(mode==='text')setMode('image');
 }
-function setMode(next){mode=['text','image','video'].includes(next)?next:'image';for(const name of ['text','image','video']){$(name+'-tab').classList.toggle('selected',name===mode);$(name+'-tab').setAttribute('aria-selected',String(name===mode));}$('upload-section').hidden=mode==='text';$('video-settings').hidden=mode!=='video';$('image-size-settings').hidden=mode==='video';$('image-advanced-settings').hidden=mode==='video';$('upload').multiple=mode!=='video';$('upload-caption').textContent=mode==='video'?'First frame':'Reference images';$('upload-action').textContent=mode==='video'?'Choose or drop one image':'Choose or drop images';$('upload-limit').textContent=mode==='video'?'One image, up to 12 MB':'Up to 20 images, 12 MB each';$('source-hint').textContent=mode==='video'?'This image is the first frame. Describe motion, camera movement, and sound.':'The same prompt is applied to each image.';$('prompt-caption').textContent=mode==='video'?'Video prompt':'Prompt';$('prompt').placeholder=mode==='video'?'Example: The camera moves closer as the person smiles and turns. Soft ambient sound.':'Example: A cabin by the sea after rain, warm lights, cinematic detail.';if(mode==='video'&&sources.length>1){for(const item of sources.slice(1))URL.revokeObjectURL(item.url);sources=sources.slice(0,1);}renderSources();}
+function setMode(next){mode=['text','image','video'].includes(next)?next:'image';for(const name of ['text','image','video']){$(name+'-tab').classList.toggle('selected',name===mode);$(name+'-tab').setAttribute('aria-selected',String(name===mode));}$('upload-section').hidden=mode==='text';$('video-settings').hidden=mode!=='video';$('image-size-settings').hidden=mode==='video';$('image-advanced-settings').hidden=mode==='video';$('upload').multiple=true;$('upload-caption').textContent=mode==='video'?'First-frame images':'Reference images';$('upload-action').textContent='Choose or drop images';$('upload-limit').textContent='Up to 20 images, 12 MB each';$('source-hint').textContent=mode==='video'?'Each image becomes the first frame of a separate video. The same prompt and settings are applied to all videos.':'The same prompt is applied to each image.';$('prompt-caption').textContent=mode==='video'?'Video prompt':'Prompt';$('prompt').placeholder=mode==='video'?'Example: The camera moves closer as the person smiles and turns. Soft ambient sound.':'Example: A cabin by the sea after rain, warm lights, cinematic detail.';renderSources();}
 $('video-tab').addEventListener('click',()=>setMode('video'));
 $('text-tab').addEventListener('click',()=>setMode('text'));$('image-tab').addEventListener('click',()=>setMode('image'));
 $('video-profile').addEventListener('change',renderSources);
@@ -112,7 +110,7 @@ $('all-jobs-close').addEventListener('click',()=>{$('all-jobs-panel').hidden=tru
 setInterval(refreshGlobalJobs,3000);
 function renderBatch(batch){
   $('batch-progress').hidden=false;$('batch-summary').textContent='Completed '+batch.completed+' / '+batch.total+' · running '+batch.running+' · queued '+batch.queued+(batch.failed?' · failed '+batch.failed:'');
-  $('batch-note').textContent=batch.stage==='done'?'Batch complete. Select a result below.':batch.spec.mode==='video'?(batch.spec.video_profile==='base'?'H3-Base':'H3 Turbo')+' · '+(batch.spec.duration||5)+' s · '+Math.ceil((batch.spec.duration||5)/5)+' segments. Reload to resume the job.':'Two GPUs take jobs from the same queue. Reload to resume this batch.';
+  $('batch-note').textContent=batch.stage==='done'?'Batch complete. Select a result below.':batch.spec.mode==='video'?(batch.spec.video_profile==='base'?'H3-Base':'H3 Turbo')+' · '+(batch.spec.duration||5)+' s each · '+batch.total+' video'+(batch.total===1?'':'s')+' · two GPUs take jobs from the queue. Reload to resume this batch.':'Two GPUs take jobs from the same queue. Reload to resume this batch.';
   for(const job of batch.jobs){
     let card=cards.get(job.id);
     if(!card){
@@ -163,7 +161,7 @@ async function follow(batch,signal){
     check(signal);activeBatch=batch;latestSeconds=batch.seconds;latestAt=performance.now();$('elapsed').value=Math.floor(batch.seconds)+' s';renderBatch(batch);
     const ready=batch.jobs.filter(job=>job.stage==='done'&&!results.has(job.id));await parallel(ready,job=>receiveResult(job,signal),signal,2);renderBatch(batch);
     if(batch.stage==='done'){if(batch.failed)$('form-error').textContent=batch.failed+' item(s) failed. Other results remain available.';return;}
-    if(!results.size){const running=batch.jobs.filter(job=>job.gpu!==null&&job.stage!=='done'&&job.stage!=='error');stage(running.length?(batch.spec.mode==='video'?'Generating video with '+(batch.spec.video_profile==='base'?'H3-Base':'H3 Turbo'):'Processing images'):'Queued',running.length?running.map(job=>'GPU '+job.gpu+' · item '+(job.index+1)+' · '+(job.stage==='sampling'?job.step+'/'+job.total+' steps':stages[job.stage])).join('; '):'Batch: '+batch.total+(batch.spec.mode==='video'?' video':' images')+', waiting for an available GPU.');}
+    if(!results.size){const running=batch.jobs.filter(job=>job.gpu!==null&&job.stage!=='done'&&job.stage!=='error');stage(running.length?(batch.spec.mode==='video'?'Generating videos with '+(batch.spec.video_profile==='base'?'H3-Base':'H3 Turbo'):'Processing images'):'Queued',running.length?running.map(job=>'GPU '+job.gpu+' · item '+(job.index+1)+' · '+(job.stage==='sampling'?job.step+'/'+job.total+' steps':stages[job.stage])).join('; '):'Batch: '+batch.total+(batch.spec.mode==='video'?' videos':' images')+', waiting for an available GPU.');}
     await sleep(1000,signal);batch=await request('/api/batches/status',{id:batch.id},signal);
   }
 }

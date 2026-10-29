@@ -25,7 +25,7 @@ from starlette.concurrency import run_in_threadpool
 ROOT = Path(__file__).resolve().parent
 WEB_ROOT = Path(os.environ.get("STUDIO_WEB_ROOT", ROOT / "web"))
 PORT = int(os.environ.get("Z_IMAGE_PORT", "7860"))
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 TABS, JOBS, UPLOADS, BATCHES = {}, {}, {}, {}
 QUEUE = asyncio.Queue()
 GPU_QUEUES = {}
@@ -451,7 +451,7 @@ async def batch_start(request: Request):
         if mode == "video" and video_profile not in ("fast", "base"):
             raise ValueError()
         items = data.get("items")
-        if not isinstance(items, list) or not 1 <= len(items) <= MAX_BATCH or (mode in ("text", "video") and len(items) != 1):
+        if not isinstance(items, list) or not 1 <= len(items) <= MAX_BATCH or (mode == "text" and len(items) != 1):
             raise ValueError()
         if any(not isinstance(item, dict) or not valid_id(item.get("id")) or item["id"] in JOBS for item in items):
             raise ValueError()

@@ -53,7 +53,7 @@
           <label class="field-label" for="duration"><b>Duration (seconds)</b></label>
           <input id="duration" type="number" min="1" max="30" step="1" value="5" inputmode="numeric">
           <p class="field-hint">1 to 30 seconds at 24 fps. Video longer than 5 seconds is generated in segments. H3-Base is substantially slower.</p>
-          <p class="field-hint">The uploaded image is the first frame. Describe motion, camera movement, and sound. Subjects or scenes may change between segments.</p>
+          <p class="field-hint">Each uploaded image starts a separate video with the same prompt and settings. Describe motion, camera movement, and sound. Subjects or scenes may change between segments.</p>
         </div>
         <label class="field-label" for="prompt"><b id="prompt-caption">Prompt</b></label>
         <textarea id="prompt" rows="5" maxlength="4000" required spellcheck="false" placeholder="Describe the output you want."></textarea>

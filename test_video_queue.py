@@ -1,6 +1,7 @@
 """Check the image-to-video API contract without loading model weights."""
 import asyncio
 import base64
+import time
 import uuid
 
 import httpx
@@ -27,6 +28,8 @@ class FakeImageRunner:
 
 
 class FakeVideoRunner:
+    calls = []
+
     def __init__(self, gpu):
         self.gpu = gpu
 
@@ -34,10 +37,12 @@ class FakeVideoRunner:
         pass
 
     def run(self, params, source, progress):
-        assert source == b"fake-jpeg-content"
+        assert source.startswith(b"fake-jpeg-content-")
         assert params[5] == 30
         assert params[6] == "base"
+        self.calls.append((self.gpu, source))
         progress("sampling", 1, 300)
+        time.sleep(.05)
         result = b"\x00\x00\x00\x18ftypisom" + b"fake-video"
         return result, dict(gpu=self.gpu, seed=7, seconds=.01, width=512,
                             height=512, mode="video", duration=30, segments=6)
@@ -60,15 +65,18 @@ async def main():
                 assert response.status_code == status, (path, response.text)
                 return response
 
-            upload_id, batch_id, job_id = ident(), ident(), ident()
-            source = b"fake-jpeg-content"
-            await post("/api/upload/start", {"id": upload_id, "total": len(source)})
-            await post("/api/upload/chunk", {"id": upload_id, "index": 0,
-                                             "chunk": base64.b64encode(source).decode()})
+            batch_id = ident()
+            upload_ids, job_ids, sources = [ident(), ident()], [ident(), ident()], [
+                b"fake-jpeg-content-1", b"fake-jpeg-content-2"]
+            for upload_id, source in zip(upload_ids, sources):
+                await post("/api/upload/start", {"id": upload_id, "total": len(source)})
+                await post("/api/upload/chunk", {"id": upload_id, "index": 0,
+                                                 "chunk": base64.b64encode(source).decode()})
             spec = dict(id=batch_id, mode="video", prompt="Slow camera pan",
                         width=512, height=512, seed=7, steps=40, duration=30,
                         video_profile="base",
-                        items=[dict(id=job_id, label="frame.jpg", upload_id=upload_id)])
+                        items=[dict(id=job_id, label=f"frame-{index}.jpg", upload_id=upload_id)
+                               for index, (job_id, upload_id) in enumerate(zip(job_ids, upload_ids), 1)])
             await post("/api/batches/start", spec)
             for _ in range(100):
                 batch = (await post("/api/batches/status", {"id": batch_id})).json()
@@ -77,15 +85,18 @@ async def main():
                 await asyncio.sleep(.01)
             else:
                 raise AssertionError("Video job did not finish")
-            assert batch["completed"] == 1 and batch["spec"]["duration"] == 30
+            assert batch["completed"] == 2 and batch["total"] == 2 and batch["spec"]["duration"] == 30
             assert batch["spec"]["video_profile"] == "base"
-            result = await post("/api/jobs/result", {"id": job_id})
-            assert result.headers["content-type"] == "video/mp4"
-            assert result.content.startswith(b"\x00\x00\x00\x18ftyp")
-            await post("/api/jobs/result", {"id": job_id}, other, 404)
+            assert {gpu for gpu, _ in FakeVideoRunner.calls} == {0, 1}
+            assert {source for _, source in FakeVideoRunner.calls} == set(sources)
+            for job_id in job_ids:
+                result = await post("/api/jobs/result", {"id": job_id})
+                assert result.headers["content-type"] == "video/mp4"
+                assert result.content.startswith(b"\x00\x00\x00\x18ftyp")
+                await post("/api/jobs/result", {"id": job_id}, other, 404)
             await post("/api/tab/clear", {})
             assert not studio.JOBS and not studio.BATCHES
-    print("PASS: 30-second image-to-video job, MP4 delivery, and tab isolation")
+    print("PASS: two-image video batch, dual-GPU assignment, 30-second settings, MP4 delivery, and tab isolation")
 
 
 asyncio.run(main())

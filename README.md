@@ -57,7 +57,7 @@ The models are downloaded directly from their publishers: [Qwen-Image-2.1](https
 
 - **Text to image:** enter a prompt. One image is generated per job.
 - **Image editing:** select up to 20 input images and enter one prompt, applied separately to each image.
-- **Image to video:** select one first-frame image, enter a motion prompt, choose 1–30 seconds at 24 fps, and select H3 Turbo or H3-Base. Turbo uses the four-step LoRA. H3-Base removes the Turbo LoRA and runs the official 50-step base sampler. Both modes use ComfyUI's inference-equivalent AdaLN-pruned int8-convrot weight.
+- **Image to video:** select up to 20 first-frame images, enter one motion prompt, choose 1–30 seconds at 24 fps, and select H3 Turbo or H3-Base. Each image becomes a separate queued video; two GPUs can process two videos in parallel. Turbo uses the four-step LoRA. H3-Base removes the Turbo LoRA and runs the official 50-step base sampler. Both modes use ComfyUI's inference-equivalent AdaLN-pruned int8-convrot weight.
 - **New tab:** open an independent workspace. Refreshing a tab recovers its current batch ID. Duplicating a tab gives the copy a new ID.
 - **All jobs:** see queue and GPU status and stop individual jobs.
 
