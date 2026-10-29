@@ -1,0 +1,14 @@
+accelerate==1.15.0
+av==15.1.0
+diffusers==0.42.1
+fastapi==0.162.0
+huggingface_hub==1.33.0
+httpx==0.28.1
+Pillow==11.3.0
+safetensors==0.8.0
+sentencepiece==0.2.2
+starlette==1.10.0
+tokenizers==0.23.3
+transformers==5.21.0
+uvicorn==0.29.0
+websockets==17.1

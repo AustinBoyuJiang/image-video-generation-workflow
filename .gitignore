@@ -1,0 +1,43 @@
+# Downloaded models and repositories
+qwen-image-2.1/
+h3-models/
+h3-comfy/
+model/
+weights/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.bin
+
+# Runtime state and user media
+.venv/
+h3-venv/
+__pycache__/
+*.py[cod]
+*.log
+*.pid
+outputs/
+input/
+output/
+temp/
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.mp4
+*.mov
+*.wav
+*.gif
+*.zip
+*.tar*
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.token
+*status.json
