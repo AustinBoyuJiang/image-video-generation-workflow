@@ -26,24 +26,48 @@ from h3_media import join_segments, last_frame_png
 
 
 ROOT = Path(__file__).resolve().parent
-MODEL_FILES = {
-    "diffusion_models": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+COMMON_MODEL_FILES = {
     "text_encoders": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
     "vae": "minimax_h3_video_vae_int8_convrot.safetensors",
     "audio_vae": "minimax_h3_audio_vae_fp32.safetensors",
+}
+MODEL_PROFILES = {
+    "fast": {
+        "diffusion_models": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "steps": 4,
+        "label": "H3 Turbo",
+    },
+    "base": {
+        "diffusion_models": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "steps": 50,
+        "label": "H3-Base",
+    },
+}
+MODEL_FILES = {
+    **COMMON_MODEL_FILES,
+    "diffusion_models": MODEL_PROFILES["fast"]["diffusion_models"],
     "loras": "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
 }
 
 
-def models_ready():
+def profile_files(profile):
+    files = {**COMMON_MODEL_FILES, "diffusion_models": MODEL_PROFILES[profile]["diffusion_models"]}
+    if profile == "fast":
+        files["loras"] = MODEL_FILES["loras"]
+    return files
+
+
+def models_ready(profile="fast"):
+    if profile not in MODEL_PROFILES:
+        return False
     return all((ROOT / "h3-models" / ("vae" if kind == "audio_vae" else kind) / name).is_file()
-               for kind, name in MODEL_FILES.items())
+               for kind, name in profile_files(profile).items())
 
 
-def ensure_model_links():
-    if not models_ready():
+def ensure_model_links(profile):
+    if not models_ready(profile):
         raise RuntimeError("H3 model is not ready. Please retry later.")
-    for kind, name in MODEL_FILES.items():
+    for kind, name in profile_files(profile).items():
         directory = "vae" if kind == "audio_vae" else kind
         target = ROOT / "h3-models" / directory / name
         link = ROOT / "h3-comfy" / "models" / directory / name
@@ -69,24 +93,22 @@ def _canvas(source):
     return min(width, 1024), min(height, 1024)
 
 
-def _graph(prompt, source, seed, token):
+def _graph(prompt, source, seed, token, profile):
     width, height = _canvas(source)
     if seed < 0:
         seed = secrets.randbelow(2**32)
     link = lambda node, slot=0: [str(node), slot]
-    return {
+    model = MODEL_PROFILES[profile]
+    graph = {
         "1": {"class_type": "StudioRAMLoadImage", "inputs": {"token": token}},
-        "2": {"class_type": "UNETLoader", "inputs": {"unet_name": MODEL_FILES["diffusion_models"], "weight_dtype": "default"}},
+        "2": {"class_type": "UNETLoader", "inputs": {"unet_name": model["diffusion_models"], "weight_dtype": "default"}},
         "3": {"class_type": "CLIPLoader", "inputs": {"clip_name": MODEL_FILES["text_encoders"], "type": "minimax", "device": "default"}},
         "4": {"class_type": "VAELoader", "inputs": {"vae_name": MODEL_FILES["vae"]}},
         "5": {"class_type": "VAELoader", "inputs": {"vae_name": MODEL_FILES["audio_vae"]}},
         "6": {"class_type": "MiniMaxH3ImageToVideo", "inputs": {"clip": link(3), "vae": link(4), "prompt": prompt,
                 "width": width, "height": height, "length": 124, "first_frame": link(1)}},
-        "7": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": link(2), "lora_name": MODEL_FILES["loras"], "strength_model": 1.0}},
         "8": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
-        "9": {"class_type": "BasicGuider", "inputs": {"model": link(7), "conditioning": link(6)}},
         "10": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "res_multistep"}},
-        "11": {"class_type": "BasicScheduler", "inputs": {"model": link(7), "scheduler": "simple", "steps": 4, "denoise": 1.0}},
         "12": {"class_type": "SamplerCustomAdvanced", "inputs": {"noise": link(8), "guider": link(9),
                 "sampler": link(10), "sigmas": link(11), "latent_image": link(6, 1)}},
         "13": {"class_type": "VAEDecode", "inputs": {"samples": link(12), "vae": link(4)}},
@@ -94,7 +116,16 @@ def _graph(prompt, source, seed, token):
         "15": {"class_type": "CreateVideo", "inputs": {"images": link(13), "fps": 24.0, "audio": link(14),
                 "bit_depth": 8, "color_space": "sRGB", "codec": "none"}},
         "16": {"class_type": "StudioRAMSaveVideo", "inputs": {"video": link(15), "token": token}},
-    }, seed, width, height
+    }
+    model_link = link(2)
+    if profile == "fast":
+        graph["7"] = {"class_type": "LoraLoaderModelOnly", "inputs": {
+            "model": link(2), "lora_name": MODEL_FILES["loras"], "strength_model": 1.0}}
+        model_link = link(7)
+    graph["9"] = {"class_type": "BasicGuider", "inputs": {"model": model_link, "conditioning": link(6)}}
+    graph["11"] = {"class_type": "BasicScheduler", "inputs": {
+        "model": model_link, "scheduler": "simple", "steps": model["steps"], "denoise": 1.0}}
+    return graph, seed, width, height
 
 
 class H3Runner:
@@ -118,15 +149,19 @@ class H3Runner:
 
     def run(self, params, source, progress):
         with self.lock:
-            if not models_ready():
+            profile = params[6] if len(params) > 6 else "fast"
+            if profile not in MODEL_PROFILES:
+                raise ValueError("Unknown H3 model profile.")
+            if not models_ready(profile):
                 raise RuntimeError("H3 model is not ready. Please retry later.")
-            ensure_model_links()
+            ensure_model_links(profile)
             prompt, _, _, requested_seed, _ = params[:5]
             seconds = int(params[5]) if len(params) > 5 else 5
             if not 1 <= seconds <= 30:
                 raise ValueError("Video duration must be between 1 and 30 seconds.")
             segments = math.ceil(seconds / 5)
-            total_steps = 4 * segments
+            steps = MODEL_PROFILES[profile]["steps"]
+            total_steps = steps * segments
             seed = secrets.randbelow(2**32) if requested_seed < 0 else requested_seed
             client_id = secrets.token_hex(16)
             width, height = _canvas(source)
@@ -177,8 +212,8 @@ class H3Runner:
                 current_source = source
                 for segment in range(segments):
                     token = secrets.token_hex(16)
-                    graph, _, width, height = _graph(prompt, current_source, (seed + segment) % (2**32), token)
-                    progress("encoding", segment * 4, total_steps)
+                    graph, _, width, height = _graph(prompt, current_source, (seed + segment) % (2**32), token, profile)
+                    progress("encoding", segment * steps, total_steps)
                     req = urllib.request.Request(base + f"/studio-ram/input/{token}", data=current_source,
                                                  headers={"Content-Type": "application/octet-stream"})
                     with urllib.request.urlopen(req, timeout=30) as response:
@@ -187,7 +222,7 @@ class H3Runner:
                     if submitted.get("node_errors") or not submitted.get("prompt_id"):
                         raise RuntimeError("H3 workflow validation failed.")
                     prompt_id = submitted["prompt_id"]
-                    progress("sampling", segment * 4, total_steps)
+                    progress("sampling", segment * steps, total_steps)
                     deadline = time.monotonic() + 7200
                     while time.monotonic() < deadline:
                         if ws is not None:
@@ -198,13 +233,13 @@ class H3Runner:
                                 event = json.loads(message)
                                 if event.get("type") == "progress" and event.get("data", {}).get("prompt_id") == prompt_id:
                                     data = event["data"]
-                                    progress("sampling", segment * 4 + int(data.get("value", 0)), total_steps)
+                                    progress("sampling", segment * steps + int(data.get("value", 0)), total_steps)
                                 elif event.get("type") == "executing" and event.get("data", {}).get("prompt_id") == prompt_id:
                                     node = event["data"].get("node")
                                     if node in ("13", "14"):
-                                        progress("decoding", segment * 4 + 4, total_steps)
+                                        progress("decoding", segment * steps + steps, total_steps)
                                     elif node in ("15", "16"):
-                                        progress("packing", segment * 4 + 4, total_steps)
+                                        progress("packing", segment * steps + steps, total_steps)
                             except TimeoutError:
                                 pass
                             except (OSError, ValueError, ConnectionClosed):
@@ -234,6 +269,7 @@ class H3Runner:
                     lambda *_: progress("packing", total_steps, total_steps))
                 return video, {"gpu": self.gpu, "seed": seed, "seconds": round(time.monotonic() - started, 1),
                                "width": width, "height": height, "mode": "video", "duration": seconds,
+                               "profile": profile, "model": MODEL_PROFILES[profile]["label"],
                                "segments": segments}
             finally:
                 if ws is not None:

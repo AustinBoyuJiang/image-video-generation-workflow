@@ -52,7 +52,7 @@ function renderSources(){
     const remove=document.createElement('button');remove.type='button';remove.textContent='Remove';remove.disabled=busy;remove.setAttribute('aria-label','Remove input image '+(index+1));
     remove.addEventListener('click',()=>{URL.revokeObjectURL(item.url);sources=sources.filter(other=>other!==item);renderSources();});card.append(img,name,remove);$('source-list').append(card);
   }
-  if(!selected)$('result-meta').textContent=mode==='video'?'MiniMax H3':'Qwen-Image-2.1';
+  if(!selected)$('result-meta').textContent=mode==='video'?($('video-profile').value==='base'?'H3-Base':'H3 Turbo'):'Qwen-Image-2.1';
 }
 function clearSources(){for(const item of sources)URL.revokeObjectURL(item.url);sources=[];$('upload').value='';renderSources();}
 function addFiles(files){
@@ -67,6 +67,7 @@ function addFiles(files){
 function setMode(next){mode=['text','image','video'].includes(next)?next:'image';for(const name of ['text','image','video']){$(name+'-tab').classList.toggle('selected',name===mode);$(name+'-tab').setAttribute('aria-selected',String(name===mode));}$('upload-section').hidden=mode==='text';$('video-settings').hidden=mode!=='video';$('image-size-settings').hidden=mode==='video';$('image-advanced-settings').hidden=mode==='video';$('upload').multiple=mode!=='video';$('upload-caption').textContent=mode==='video'?'First frame':'Reference images';$('upload-action').textContent=mode==='video'?'Choose or drop one image':'Choose or drop images';$('upload-limit').textContent=mode==='video'?'One image, up to 12 MB':'Up to 20 images, 12 MB each';$('source-hint').textContent=mode==='video'?'This image is the first frame. Describe motion, camera movement, and sound.':'The same prompt is applied to each image.';$('prompt-caption').textContent=mode==='video'?'Video prompt':'Prompt';$('prompt').placeholder=mode==='video'?'Example: The camera moves closer as the person smiles and turns. Soft ambient sound.':'Example: A cabin by the sea after rain, warm lights, cinematic detail.';if(mode==='video'&&sources.length>1){for(const item of sources.slice(1))URL.revokeObjectURL(item.url);sources=sources.slice(0,1);}renderSources();}
 $('video-tab').addEventListener('click',()=>setMode('video'));
 $('text-tab').addEventListener('click',()=>setMode('text'));$('image-tab').addEventListener('click',()=>setMode('image'));
+$('video-profile').addEventListener('change',renderSources);
 $('upload').addEventListener('change',event=>addFiles(event.target.files));$('clear-sources').addEventListener('click',clearSources);
 $('drop-zone').addEventListener('dragover',event=>{event.preventDefault();$('drop-zone').classList.add('drag');});
 $('drop-zone').addEventListener('dragleave',()=>$('drop-zone').classList.remove('drag'));
@@ -77,7 +78,7 @@ function chooseResult(id){
   const result=results.get(id);if(!result)return;selected=id;
   const video=result.job.mode==='video';$('result').hidden=video;$('result-video').hidden=!video;if(video){$('result').removeAttribute('src');$('result-video').src=result.url;}else{$('result-video').pause();$('result-video').removeAttribute('src');$('result').src=result.url;}$('empty-state').hidden=true;$('loading').hidden=true;
   $('reuse').disabled=busy||video;$('clear').disabled=false;$('canvas-label').textContent=result.job.label;
-  const j=result.job;$('result-meta').textContent=(video?'MiniMax H3 · '+(j.stats.duration||activeBatch?.spec.duration||5)+' s video · ':'Qwen-Image-2.1 · ')+(j.stats.width||j.width)+' × '+(j.stats.height||j.height)+' · GPU '+j.gpu+' · generated in '+j.stats.seconds+' s · received in '+result.seconds.toFixed(2)+' s · seed '+j.stats.seed;
+  const j=result.job;$('result-meta').textContent=(video?(j.stats.model||'MiniMax H3')+' · '+(j.stats.duration||activeBatch?.spec.duration||5)+' s video · ':'Qwen-Image-2.1 · ')+(j.stats.width||j.width)+' × '+(j.stats.height||j.height)+' · GPU '+j.gpu+' · generated in '+j.stats.seconds+' s · received in '+result.seconds.toFixed(2)+' s · seed '+j.stats.seed;
   for(const [key,card]of cards)card.element.classList.toggle('selected-result',key===id);
 }
 function setBusy(value){busy=value;$('generate').disabled=value;$('generate-label').textContent=value?'Processing batch':'Add to queue';$('reuse').disabled=value||!selected||results.get(selected)?.job.mode==='video';renderSources();clearInterval(ticker);if(value)ticker=setInterval(()=>{$('elapsed').value=Math.floor(latestSeconds+(performance.now()-latestAt)/1000)+' s';},1000);}
@@ -111,7 +112,7 @@ $('all-jobs-close').addEventListener('click',()=>{$('all-jobs-panel').hidden=tru
 setInterval(refreshGlobalJobs,3000);
 function renderBatch(batch){
   $('batch-progress').hidden=false;$('batch-summary').textContent='Completed '+batch.completed+' / '+batch.total+' · running '+batch.running+' · queued '+batch.queued+(batch.failed?' · failed '+batch.failed:'');
-  $('batch-note').textContent=batch.stage==='done'?'Batch complete. Select a result below.':batch.spec.mode==='video'?'MiniMax H3 · '+(batch.spec.duration||5)+' s · '+Math.ceil((batch.spec.duration||5)/5)+' segments. Reload to resume the job.':'Two GPUs take jobs from the same queue. Reload to resume this batch.';
+  $('batch-note').textContent=batch.stage==='done'?'Batch complete. Select a result below.':batch.spec.mode==='video'?(batch.spec.video_profile==='base'?'H3-Base':'H3 Turbo')+' · '+(batch.spec.duration||5)+' s · '+Math.ceil((batch.spec.duration||5)/5)+' segments. Reload to resume the job.':'Two GPUs take jobs from the same queue. Reload to resume this batch.';
   for(const job of batch.jobs){
     let card=cards.get(job.id);
     if(!card){
@@ -157,12 +158,12 @@ async function receiveResult(job,signal){
   if(!selected)chooseResult(job.id);
 }
 async function follow(batch,signal){
-  activeBatch=batch;batchId=batch.id;remember();const spec=batch.spec;setMode(spec.mode);$('prompt').value=spec.prompt;$('width').value=String(spec.width);$('height').value=String(spec.height);$('seed').value=String(spec.seed);$('steps').value=String(spec.steps);$('duration').value=String(spec.duration||5);
+  activeBatch=batch;batchId=batch.id;remember();const spec=batch.spec;$('video-profile').value=spec.video_profile||'fast';setMode(spec.mode);$('prompt').value=spec.prompt;$('width').value=String(spec.width);$('height').value=String(spec.height);$('seed').value=String(spec.seed);$('steps').value=String(spec.steps);$('duration').value=String(spec.duration||5);
   while(true){
     check(signal);activeBatch=batch;latestSeconds=batch.seconds;latestAt=performance.now();$('elapsed').value=Math.floor(batch.seconds)+' s';renderBatch(batch);
     const ready=batch.jobs.filter(job=>job.stage==='done'&&!results.has(job.id));await parallel(ready,job=>receiveResult(job,signal),signal,2);renderBatch(batch);
     if(batch.stage==='done'){if(batch.failed)$('form-error').textContent=batch.failed+' item(s) failed. Other results remain available.';return;}
-    if(!results.size){const running=batch.jobs.filter(job=>job.gpu!==null&&job.stage!=='done'&&job.stage!=='error');stage(running.length?(batch.spec.mode==='video'?'Generating video with MiniMax H3':'Processing images'):'Queued',running.length?running.map(job=>'GPU '+job.gpu+' · item '+(job.index+1)+' · '+(job.stage==='sampling'?job.step+'/'+job.total+' steps':stages[job.stage])).join('; '):'Batch: '+batch.total+(batch.spec.mode==='video'?' video':' images')+', waiting for an available GPU.');}
+    if(!results.size){const running=batch.jobs.filter(job=>job.gpu!==null&&job.stage!=='done'&&job.stage!=='error');stage(running.length?(batch.spec.mode==='video'?'Generating video with '+(batch.spec.video_profile==='base'?'H3-Base':'H3 Turbo'):'Processing images'):'Queued',running.length?running.map(job=>'GPU '+job.gpu+' · item '+(job.index+1)+' · '+(job.stage==='sampling'?job.step+'/'+job.total+' steps':stages[job.stage])).join('; '):'Batch: '+batch.total+(batch.spec.mode==='video'?' video':' images')+', waiting for an available GPU.');}
     await sleep(1000,signal);batch=await request('/api/batches/status',{id:batch.id},signal);
   }
 }
@@ -175,7 +176,7 @@ async function resume(){await manage(async signal=>{stage('Restoring this tab');
 $('generate-form').addEventListener('submit',event=>{
   event.preventDefault();if(busy)return;if(mode!=='text'&&!sources.length){$('form-error').textContent='Select an input image first.';return;}
   const picked=sources.slice(),spec={id:activeBatch?opaque():batchId,mode,prompt:$('prompt').value,width:Number($('width').value),height:Number($('height').value),seed:Number($('seed').value),steps:Number($('steps').value),items:[]};
-  if(mode==='video')spec.duration=Number($('duration').value);
+  if(mode==='video'){spec.duration=Number($('duration').value);spec.video_profile=$('video-profile').value;}
   batchId=spec.id;activeBatch=null;remember();clearResults();$('batch-progress').hidden=true;latestSeconds=0;latestAt=performance.now();
   manage(async signal=>{
     stage('Preparing batch');

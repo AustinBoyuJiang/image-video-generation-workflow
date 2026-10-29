@@ -36,7 +36,8 @@ class FakeVideoRunner:
     def run(self, params, source, progress):
         assert source == b"fake-jpeg-content"
         assert params[5] == 30
-        progress("sampling", 1, 24)
+        assert params[6] == "base"
+        progress("sampling", 1, 300)
         result = b"\x00\x00\x00\x18ftypisom" + b"fake-video"
         return result, dict(gpu=self.gpu, seed=7, seconds=.01, width=512,
                             height=512, mode="video", duration=30, segments=6)
@@ -45,7 +46,7 @@ class FakeVideoRunner:
 async def main():
     studio.RUNNER_FACTORY = FakeImageRunner
     studio.H3Runner = FakeVideoRunner
-    studio.models_ready = lambda: True
+    studio.models_ready = lambda profile="fast": profile in ("fast", "base")
     owner, other, page = ident(), ident(), ident()
     async with studio.app.router.lifespan_context(studio.app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=studio.app),
@@ -66,6 +67,7 @@ async def main():
                                              "chunk": base64.b64encode(source).decode()})
             spec = dict(id=batch_id, mode="video", prompt="Slow camera pan",
                         width=512, height=512, seed=7, steps=40, duration=30,
+                        video_profile="base",
                         items=[dict(id=job_id, label="frame.jpg", upload_id=upload_id)])
             await post("/api/batches/start", spec)
             for _ in range(100):
@@ -76,6 +78,7 @@ async def main():
             else:
                 raise AssertionError("Video job did not finish")
             assert batch["completed"] == 1 and batch["spec"]["duration"] == 30
+            assert batch["spec"]["video_profile"] == "base"
             result = await post("/api/jobs/result", {"id": job_id})
             assert result.headers["content-type"] == "video/mp4"
             assert result.content.startswith(b"\x00\x00\x00\x18ftyp")

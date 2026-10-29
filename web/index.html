@@ -44,9 +44,15 @@
           <p id="source-hint" class="field-hint">The same prompt is applied to each selected image.</p>
         </div>
         <div id="video-settings" hidden>
+          <label class="field-label" for="video-profile"><b>Model</b></label>
+          <select id="video-profile">
+            <option value="fast" selected>H3 Turbo · fast</option>
+            <option value="base">H3-Base · 50-step quality</option>
+          </select>
+          <p class="field-hint">H3 Turbo uses the current 4-step workflow. H3-Base removes the Turbo LoRA and runs the official 50-step base sampler.</p>
           <label class="field-label" for="duration"><b>Duration (seconds)</b></label>
           <input id="duration" type="number" min="1" max="30" step="1" value="5" inputmode="numeric">
-          <p class="field-hint">1 to 30 seconds at 24 fps. Video longer than 5 seconds is generated in segments. A 30-second job can take 15 minutes or more.</p>
+          <p class="field-hint">1 to 30 seconds at 24 fps. Video longer than 5 seconds is generated in segments. H3-Base is substantially slower.</p>
           <p class="field-hint">The uploaded image is the first frame. Describe motion, camera movement, and sound. Subjects or scenes may change between segments.</p>
         </div>
         <label class="field-label" for="prompt"><b id="prompt-caption">Prompt</b></label>

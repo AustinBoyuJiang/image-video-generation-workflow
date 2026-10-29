@@ -25,7 +25,7 @@ from starlette.concurrency import run_in_threadpool
 ROOT = Path(__file__).resolve().parent
 WEB_ROOT = Path(os.environ.get("STUDIO_WEB_ROOT", ROOT / "web"))
 PORT = int(os.environ.get("Z_IMAGE_PORT", "7860"))
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 TABS, JOBS, UPLOADS, BATCHES = {}, {}, {}, {}
 QUEUE = asyncio.Queue()
 GPU_QUEUES = {}
@@ -333,7 +333,8 @@ async def privacy(request, call_next):
 
 @app.get("/api/health")
 async def health():
-    return dict(ok=True, version=VERSION, model="Qwen-Image-2.1 + MiniMax-H3", h3_ready=models_ready(), password=False,
+    return dict(ok=True, version=VERSION, model="Qwen-Image-2.1 + MiniMax-H3", h3_ready=models_ready(),
+                h3_base_ready=models_ready("base"), password=False,
                 queued=sum(j["stage"] == "queued" for j in JOBS.values()), running=sum(v is not None for v in ACTIVE_JOBS.values()),
                 gpus=[dict(gpu=gpu, busy=ACTIVE_JOBS.get(gpu) is not None) for gpu in GPU_IDS])
 
@@ -436,11 +437,14 @@ async def batch_start(request: Request):
         width, height = int(data.get("width", 1024)), int(data.get("height", 1024))
         seed, steps = int(data.get("seed", -1)), int(data.get("steps", 40))
         duration = int(data.get("duration", 5)) if mode == "video" else None
+        video_profile = data.get("video_profile", "fast") if mode == "video" else None
         if mode not in ("text", "image", "video") or not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 4000:
             raise ValueError()
         if any(x < 512 or x > 1536 or x % 16 for x in (width, height)) or not -1 <= seed < 2**32 or not 1 <= steps <= 50:
             raise ValueError()
         if mode == "video" and (not isinstance(data.get("duration", 5), int) or not 1 <= duration <= 30):
+            raise ValueError()
+        if mode == "video" and video_profile not in ("fast", "base"):
             raise ValueError()
         items = data.get("items")
         if not isinstance(items, list) or not 1 <= len(items) <= MAX_BATCH or (mode in ("text", "video") and len(items) != 1):
@@ -453,8 +457,8 @@ async def batch_start(request: Request):
             raise ValueError()
     except (ValueError, TypeError):
         raise HTTPException(400, "Invalid prompt, settings, or batch images (maximum 20).") from None
-    if mode == "video" and not models_ready():
-        raise HTTPException(503, "MiniMax H3 is not ready. Please retry later.")
+    if mode == "video" and not models_ready(video_profile):
+        raise HTTPException(503, "The selected MiniMax H3 model is not ready. Please retry later.")
     if sum(j["stage"] == "queued" for j in JOBS.values()) + len(items) > MAX_QUEUE:
         raise HTTPException(429, "Queue is full. Retry the batch later.")
     uploads = []
@@ -472,16 +476,16 @@ async def batch_start(request: Request):
         forget_batch(old["id"])
     now = time.monotonic()
     spec = dict(mode=mode, prompt=prompt, width=width, height=height, seed=seed, steps=steps)
-    if mode == "video":spec["duration"] = duration
+    if mode == "video":spec.update(duration=duration, video_profile=video_profile)
     batch = dict(id=ident, owner=owner, jobs=[], spec=spec, created=now)
     BATCHES[ident] = batch
     tab["job_id"] = ident
     for index, item in enumerate(items):
         job = dict(id=item["id"], batch_id=ident, owner=owner, index=index, mode=mode,
                    label=item.get("label") or (f"Image {index+1}" if mode != "text" else "Generated image"),
-                   stage="queued", step=0, total=4 * math.ceil(duration / 5) if mode == "video" else steps, gpu=None, width=width, height=height,
+                   stage="queued", step=0, total=(50 if video_profile == "base" else 4) * math.ceil(duration / 5) if mode == "video" else steps, gpu=None, width=width, height=height,
                    created=now, started=None, finished=None, cancelled=False, result=None, delivery=None,
-                   params=(prompt, width, height, seed, steps) + ((duration,) if mode == "video" else ()),
+                   params=(prompt, width, height, seed, steps) + ((duration, video_profile) if mode == "video" else ()),
                    source=sources[index] if mode != "text" else None)
         JOBS[job["id"]] = job
         batch["jobs"].append(job["id"])

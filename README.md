@@ -9,7 +9,7 @@ The repository contains application code, a RAM-only ComfyUI bridge, setup scrip
 - Ubuntu 24.04 x86_64, Python 3.11, NVIDIA CUDA
 - Two RTX 4080 SUPER GPUs (16 GB VRAM each), 188 GiB system RAM
 - PyTorch 2.7.0 with CUDA 12.8, Qwen-Image-2.1 BF16 with CPU group offload
-- ComfyUI at the commit in `model-lock.json`, MiniMax H3 int8-convrot weights and 4-step LoRA
+- ComfyUI at the commit in `model-lock.json`, MiniMax H3 int8-convrot weights, 4-step Turbo LoRA, and 50-step Base sampling
 - Approximately 71 GB of model files; allow at least 100 GB free disk space for weights, packages, and download staging
 
 This hardware profile is tested, not a minimum requirement. A single GPU can be used by setting `QWEN_GPUS=0`; video generation and image generation still need enough GPU and system memory. Long videos are made in five-second segments and may take many minutes. Segment transitions can change subjects or scenery.
@@ -49,7 +49,7 @@ The models are downloaded directly from their publishers: [Qwen-Image-2.1](https
 
 - **Text to image:** enter a prompt. One image is generated per job.
 - **Image editing:** select up to 20 input images and enter one prompt, applied separately to each image.
-- **Image to video:** select one first-frame image, enter a motion prompt, and choose 1–30 seconds at 24 fps.
+- **Image to video:** select one first-frame image, enter a motion prompt, choose 1–30 seconds at 24 fps, and select H3 Turbo or H3-Base. Turbo uses the four-step LoRA. H3-Base removes the Turbo LoRA and runs the official 50-step base sampler. Both modes use ComfyUI's inference-equivalent AdaLN-pruned int8-convrot weight.
 - **New tab:** open an independent workspace. Refreshing a tab recovers its current batch ID. Duplicating a tab gives the copy a new ID.
 - **All jobs:** see queue and GPU status and stop individual jobs.
 
