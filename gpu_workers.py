@@ -47,6 +47,7 @@ class GpuRunner:
         self.context = multiprocessing.get_context('spawn')
         self.lock = threading.Lock()
         self.process = self.connection = self.cancel_event = None
+        self.last_activity = time.monotonic()
 
     def start(self):
         parent, child = self.context.Pipe()
@@ -56,6 +57,19 @@ class GpuRunner:
         self.process.start()
         child.close()
         self.connection = parent
+        self.last_activity = time.monotonic()
+
+    def resident(self):
+        return self.process is not None and self.process.is_alive()
+
+    def stop_if_idle(self, idle_seconds, now=None):
+        """Reap a loaded worker without racing a new or active request."""
+        with self.lock:
+            current = time.monotonic() if now is None else now
+            if not self.resident() or current - self.last_activity < idle_seconds:
+                return False
+            self.stop()
+            return True
 
     def cancel(self):
         if self.cancel_event is not None:
@@ -110,4 +124,5 @@ class GpuRunner:
                 self.stop()
                 raise RuntimeError('GPU worker unavailable') from None
             finally:
+                self.last_activity = time.monotonic()
                 params = source = message = None

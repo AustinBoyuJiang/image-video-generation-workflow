@@ -25,7 +25,7 @@ from starlette.concurrency import run_in_threadpool
 ROOT = Path(__file__).resolve().parent
 WEB_ROOT = Path(os.environ.get("STUDIO_WEB_ROOT", ROOT / "web"))
 PORT = int(os.environ.get("Z_IMAGE_PORT", "7860"))
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 TABS, JOBS, UPLOADS, BATCHES = {}, {}, {}, {}
 QUEUE = asyncio.Queue()
 GPU_QUEUES = {}
@@ -44,6 +44,7 @@ MAX_BATCH = 20
 TAB_LEASE = 24 * 3600
 CLOSE_GRACE = 24 * 3600
 CHUNK_SIZE = 49152
+GPU_IDLE_UNLOAD_SECONDS = max(30, int(os.environ.get("GPU_IDLE_UNLOAD_SECONDS", "300")))
 
 
 def valid_id(value):
@@ -283,6 +284,11 @@ async def cleanup():
     while True:
         await asyncio.sleep(10)
         expire()
+        await asyncio.gather(*(
+            run_in_threadpool(runner.stop_if_idle, GPU_IDLE_UNLOAD_SECONDS)
+            for gpu, runner in GPU_RUNNERS.items()
+            if ACTIVE_JOBS.get(gpu) is None and gpu not in GPU_RESERVED
+        ))
 
 
 @asynccontextmanager
@@ -291,8 +297,7 @@ async def lifespan(app):
     from memory_handoff import restore_from_environment
     await run_in_threadpool(restore_from_environment, sys.modules[__name__])
     for gpu in GPU_IDS:
-        runner = GPU_RUNNERS[gpu] = RUNNER_FACTORY(gpu)
-        runner.start()
+        GPU_RUNNERS[gpu] = RUNNER_FACTORY(gpu)
         VIDEO_RUNNERS[gpu] = H3Runner(gpu)
         ACTIVE_JOBS[gpu] = None
         GPU_QUEUES[gpu] = asyncio.Queue()
@@ -340,7 +345,9 @@ async def health():
     return dict(ok=True, version=VERSION, model="Qwen-Image-2.1 + MiniMax-H3 + Pika-H3-Flex", h3_ready=models_ready(),
                 h3_base_ready=models_ready("base"), pika_h3_flex_ready=models_ready("pika"), password=False,
                 queued=sum(j["stage"] == "queued" for j in JOBS.values()), running=sum(v is not None for v in ACTIVE_JOBS.values()),
-                gpus=[dict(gpu=gpu, busy=ACTIVE_JOBS.get(gpu) is not None) for gpu in GPU_IDS])
+                idle_unload_seconds=GPU_IDLE_UNLOAD_SECONDS,
+                gpus=[dict(gpu=gpu, busy=ACTIVE_JOBS.get(gpu) is not None,
+                           resident=GPU_RUNNERS[gpu].resident()) for gpu in GPU_IDS])
 
 
 @app.get("/")

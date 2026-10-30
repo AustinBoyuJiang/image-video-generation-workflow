@@ -25,11 +25,14 @@ async def main():
         png=buffer.getvalue()
     gate=threading.Event();guard=threading.Lock();calls=[];active=[0];peak=[0]
     class FakeRunner:
-        def __init__(self,gpu):self.gpu=gpu;self.cancelled=threading.Event()
+        def __init__(self,gpu):self.gpu=gpu;self.cancelled=threading.Event();self.started=False
         def start(self):pass
         def cancel(self):self.cancelled.set()
         def stop(self):self.cancel()
+        def resident(self):return self.started
+        def stop_if_idle(self,idle_seconds,now=None):return False
         def run(self,params,source,progress):
+            self.started=True
             self.cancelled.clear()
             with guard:
                 active[0]+=1;peak[0]=max(peak[0],active[0]);calls.append((self.gpu,params[0],source))
@@ -69,7 +72,8 @@ async def main():
                 raise AssertionError('batch did not reach expected state')
             spec=dict(mode='image',width=512,height=512,steps=2,seed=42)
             index=await client.get('/');assert 'type="password"' not in index.text and 'no-store' in index.headers['cache-control']
-            assert len((await client.get('/api/health')).json()['gpus'])==2
+            health=(await client.get('/api/health')).json()
+            assert len(health['gpus'])==2 and health['idle_unload_seconds']>=30
             refs=[b'a'*100000,b'b'*100000,b'c'*100000]
             items=[await upload(raw,ha) for raw in refs]
             bid=ident();request=dict(spec,id=bid,prompt='hold',items=items)

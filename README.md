@@ -22,7 +22,7 @@ This hardware profile is tested, not a minimum requirement. A single GPU can be 
    ```bash
    ./setup.sh
    .venv/bin/python download_models.py
-   QWEN_GPUS=0,1 ./start.sh
+   QWEN_GPUS=0,1 GPU_IDLE_UNLOAD_SECONDS=300 ./start.sh
    ```
 
 3. Open `http://127.0.0.1:7860/` **on the model host**. The API only listens on loopback. For access from your own computer, use an SSH tunnel with a free local port:
@@ -61,7 +61,7 @@ The models are downloaded from their publishers and official ComfyUI repack: [Qw
 - **New tab:** open an independent workspace. Refreshing a tab recovers its current batch ID. Duplicating a tab gives the copy a new ID.
 - **All jobs:** see queue and GPU status and stop individual jobs.
 
-Qwen images are delivered as lossless WebP and H3 videos as MP4. The browser stores only opaque tab and batch IDs in the URL fragment and `sessionStorage`. Inputs and results are held in process memory; H3 uses `/dev/shm` for its temporary ComfyUI directories. Running jobs continue if the page disconnects, and closed tabs retain completed batches for 24 hours. **Clear this tab** removes that tab's batch immediately. The application has no account system and should not be exposed directly to a public network.
+Qwen images are delivered as lossless WebP and H3 videos as MP4. Image workers start on demand and unload after 300 idle seconds by default, releasing their GPU and host-memory model allocations without clearing browser tabs or completed results. Set `GPU_IDLE_UNLOAD_SECONDS` to change the timeout (minimum 30 seconds). The browser stores only opaque tab and batch IDs in the URL fragment and `sessionStorage`. Inputs and results are held in process memory; H3 uses `/dev/shm` for its temporary ComfyUI directories. Running jobs continue if the page disconnects, and closed tabs retain completed batches for 24 hours. **Clear this tab** removes that tab's batch immediately. The application has no account system and should not be exposed directly to a public network.
 
 ## Verify
 
