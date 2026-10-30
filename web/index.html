@@ -48,8 +48,9 @@
           <select id="video-profile">
             <option value="fast" selected>H3 Turbo · fast</option>
             <option value="base">H3-Base · 50-step quality</option>
+            <option value="pika">Pika H3 Flex · 6-step</option>
           </select>
-          <p class="field-hint">H3 Turbo uses the current 4-step workflow. H3-Base removes the Turbo LoRA and runs the official 50-step base sampler.</p>
+          <p class="field-hint">H3 Turbo uses 4 steps. H3-Base uses the official 50-step sampler. Pika H3 Flex uses Pika's official 6-step adapter and synchronized audio.</p>
           <label class="field-label" for="duration"><b>Duration (seconds)</b></label>
           <input id="duration" type="number" min="1" max="30" step="1" value="5" inputmode="numeric">
           <p class="field-hint">1 to 30 seconds at 24 fps. Video longer than 5 seconds is generated in segments. H3-Base is substantially slower.</p>

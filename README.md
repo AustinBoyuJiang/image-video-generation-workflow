@@ -1,6 +1,6 @@
 # Image Video Generation Workflow
 
-A local web workflow for **Qwen-Image-2.1** text-to-image and image editing, plus **MiniMax H3** image-to-video with an input image and prompt. Multiple browser tabs have separate batch IDs and results. Jobs share a FIFO queue across two GPU workers; the **All jobs** panel can stop queued or running jobs.
+A local web workflow for **Qwen-Image-2.1** text-to-image and image editing, plus **MiniMax H3** and **Pika H3 Flex** image-to-video with an input image and prompt. Multiple browser tabs have separate batch IDs and results. Jobs share a FIFO queue across two GPU workers; the **All jobs** panel can stop queued or running jobs.
 
 The repository contains application code, a RAM-only ComfyUI bridge, setup scripts, and exact model file hashes. **Model weights, generated media, user uploads, local IP addresses, and virtual environments are not included.**
 
@@ -9,8 +9,8 @@ The repository contains application code, a RAM-only ComfyUI bridge, setup scrip
 - Ubuntu 24.04 x86_64, Python 3.11, NVIDIA CUDA
 - Two RTX 4080 SUPER GPUs (16 GB VRAM each), 188 GiB system RAM
 - PyTorch 2.7.0 with CUDA 12.8, Qwen-Image-2.1 BF16 with CPU group offload
-- ComfyUI at the commit in `model-lock.json`, MiniMax H3 int8-convrot weights, 4-step Turbo LoRA, and 50-step Base sampling
-- Approximately 71 GB of model files; allow at least 100 GB free disk space for weights, packages, and download staging
+- ComfyUI at the commit in `model-lock.json`, MiniMax H3 int8-convrot weights, 4-step Turbo LoRA, 50-step Base sampling, and the official 6-step Pika H3 Flex adapter
+- Approximately 73 GB of model files; allow at least 105 GB free disk space for weights, packages, and download staging
 
 This hardware profile is tested, not a minimum requirement. A single GPU can be used by setting `QWEN_GPUS=0`; video generation and image generation still need enough GPU and system memory. Long videos are made in five-second segments and may take many minutes. Segment transitions can change subjects or scenery.
 
@@ -43,7 +43,7 @@ STUDIO_SOCKET_PATH=/run/user/$(id -u)/image-video-generation.sock QWEN_GPUS=0,1 
 
 The application creates the Unix socket with mode `0600`. Run the service with `UMask=0077`, `LimitCORE=0`, and `MemorySwapMax=0`, and give only the trusted proxy account access to the socket. The application and GPU workers disable process dumps; the H3 RAM bridge applies the same protection inside ComfyUI. This blocks ordinary media-file access and process attachment by other unprivileged server users. It cannot protect plaintext being processed in memory from a server administrator with root or equivalent debugging privileges.
 
-`download_models.py` downloads only the Qwen components and five H3 weight files used by this workflow. Model repositories and revisions are pinned in `model-lock.json`. The script verifies every weight against its expected byte size and SHA256 digest. It can be rerun after an interrupted download:
+`download_models.py` downloads only the Qwen components and six H3/Pika weight files used by this workflow. Model repositories and revisions are pinned in `model-lock.json`. The script verifies every weight against its expected byte size and SHA256 digest. It can be rerun after an interrupted download:
 
 ```bash
 .venv/bin/python download_models.py --model qwen
@@ -51,13 +51,13 @@ The application creates the Unix socket with mode `0600`. Run the service with `
 .venv/bin/python download_models.py --verify-only
 ```
 
-The models are downloaded directly from their publishers: [Qwen-Image-2.1](https://huggingface.co/Qwen/Qwen-Image-2.1) and [Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3). Review the [Qwen Research License](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE) and [MiniMax H3 community license](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE) before use. Qwen's research license limits use to non-commercial research or evaluation unless you obtain a separate commercial license. This repository does not grant rights to either model's weights.
+The models are downloaded from their publishers and official ComfyUI repack: [Qwen-Image-2.1](https://huggingface.co/Qwen/Qwen-Image-2.1), [Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3), and [Pika-Labs/Pika-H3-Flex](https://huggingface.co/Pika-Labs/Pika-H3-Flex). Review the [Qwen Research License](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE) and [MiniMax H3 community license](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE) before use. The Pika adapter is a MiniMax H3 model derivative and uses the same MiniMax agreement. Qwen's research license limits use to non-commercial research or evaluation unless you obtain a separate commercial license. This repository does not grant rights to any model weights.
 
 ## Use
 
 - **Text to image:** enter a prompt. One image is generated per job.
 - **Image editing:** select up to 20 input images and enter one prompt, applied separately to each image.
-- **Image to video:** select up to 20 first-frame images, enter one motion prompt, choose 1–30 seconds at 24 fps, and select H3 Turbo or H3-Base. Each image becomes a separate queued video; two GPUs can process two videos in parallel. Turbo uses the four-step LoRA. H3-Base removes the Turbo LoRA and runs the official 50-step base sampler. Both modes use ComfyUI's inference-equivalent AdaLN-pruned int8-convrot weight.
+- **Image to video:** select up to 20 first-frame images, enter one motion prompt, choose 1–30 seconds at 24 fps, and select H3 Turbo, H3-Base, or Pika H3 Flex. Each image becomes a separate queued video; two GPUs can process two videos in parallel. Turbo uses the four-step LoRA, H3-Base uses the official 50-step sampler, and Pika H3 Flex uses Pika's official six-step adapter and fixed sampling schedule. All three reuse the same ComfyUI int8-convrot H3 base.
 - **New tab:** open an independent workspace. Refreshing a tab recovers its current batch ID. Duplicating a tab gives the copy a new ID.
 - **All jobs:** see queue and GPU status and stop individual jobs.
 
@@ -71,11 +71,12 @@ The queue tests use fake GPU workers and do not download models or create media 
 .venv/bin/python test_queue.py
 .venv/bin/python test_task_control.py
 .venv/bin/python test_video_queue.py
+.venv/bin/python test_h3_profiles.py
 curl http://127.0.0.1:7860/api/health
 ```
 
-A full model smoke test requires the downloaded weights and compatible CUDA hardware. The tested host has run both image generation and H3 video generation; the portable setup script has not been exercised from a blank machine.
+A full model smoke test requires the downloaded weights and compatible CUDA hardware. The tested host has run image generation, MiniMax H3, and Pika H3 Flex video generation; the portable setup script has not been exercised from a blank machine.
 
 ## License
 
-The application code in this repository is under the MIT License. PyTorch, Diffusers, ComfyUI, and other dependencies have their own licenses. The Qwen and MiniMax model weights have separate terms described above.
+The application code in this repository is under the MIT License. PyTorch, Diffusers, ComfyUI, and other dependencies have their own licenses. The Qwen, MiniMax, and Pika model weights have separate terms described above.

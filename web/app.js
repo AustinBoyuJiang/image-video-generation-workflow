@@ -1,6 +1,7 @@
 'use strict';
 const $=id=>document.getElementById(id), opaque=()=>{const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;const hex=Array.from(bytes,byte=>byte.toString(16).padStart(2,'0')).join('');return hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);};
 const validId=v=>typeof v==='string'&&/^[A-Za-z0-9_-]{24,80}$/.test(v);
+const videoLabel=profile=>({fast:'H3 Turbo',base:'H3-Base',pika:'Pika H3 Flex'})[profile]||'MiniMax H3';
 const key='local-generator-tab-v6', fragment=new URLSearchParams(location.hash.slice(1));
 let saved={};try{saved=JSON.parse(sessionStorage.getItem(key)||'{}');}catch{}
 const newTab=fragment.get('new')==='1';
@@ -52,7 +53,7 @@ function renderSources(){
     const remove=document.createElement('button');remove.type='button';remove.textContent='Remove';remove.disabled=busy;remove.setAttribute('aria-label','Remove input image '+(index+1));
     remove.addEventListener('click',()=>{URL.revokeObjectURL(item.url);sources=sources.filter(other=>other!==item);renderSources();});card.append(img,name,remove);$('source-list').append(card);
   }
-  if(!selected)$('result-meta').textContent=mode==='video'?($('video-profile').value==='base'?'H3-Base':'H3 Turbo'):'Qwen-Image-2.1';
+  if(!selected)$('result-meta').textContent=mode==='video'?videoLabel($('video-profile').value):'Qwen-Image-2.1';
 }
 function clearSources(){for(const item of sources)URL.revokeObjectURL(item.url);sources=[];$('upload').value='';renderSources();}
 function addFiles(files){
@@ -110,7 +111,7 @@ $('all-jobs-close').addEventListener('click',()=>{$('all-jobs-panel').hidden=tru
 setInterval(refreshGlobalJobs,3000);
 function renderBatch(batch){
   $('batch-progress').hidden=false;$('batch-summary').textContent='Completed '+batch.completed+' / '+batch.total+' · running '+batch.running+' · queued '+batch.queued+(batch.failed?' · failed '+batch.failed:'');
-  $('batch-note').textContent=batch.stage==='done'?'Batch complete. Select a result below.':batch.spec.mode==='video'?(batch.spec.video_profile==='base'?'H3-Base':'H3 Turbo')+' · '+(batch.spec.duration||5)+' s each · '+batch.total+' video'+(batch.total===1?'':'s')+' · two GPUs take jobs from the queue. Reload to resume this batch.':'Two GPUs take jobs from the same queue. Reload to resume this batch.';
+  $('batch-note').textContent=batch.stage==='done'?'Batch complete. Select a result below.':batch.spec.mode==='video'?videoLabel(batch.spec.video_profile)+' · '+(batch.spec.duration||5)+' s each · '+batch.total+' video'+(batch.total===1?'':'s')+' · two GPUs take jobs from the queue. Reload to resume this batch.':'Two GPUs take jobs from the same queue. Reload to resume this batch.';
   for(const job of batch.jobs){
     let card=cards.get(job.id);
     if(!card){
@@ -161,7 +162,7 @@ async function follow(batch,signal){
     check(signal);activeBatch=batch;latestSeconds=batch.seconds;latestAt=performance.now();$('elapsed').value=Math.floor(batch.seconds)+' s';renderBatch(batch);
     const ready=batch.jobs.filter(job=>job.stage==='done'&&!results.has(job.id));await parallel(ready,job=>receiveResult(job,signal),signal,2);renderBatch(batch);
     if(batch.stage==='done'){if(batch.failed)$('form-error').textContent=batch.failed+' item(s) failed. Other results remain available.';return;}
-    if(!results.size){const running=batch.jobs.filter(job=>job.gpu!==null&&job.stage!=='done'&&job.stage!=='error');stage(running.length?(batch.spec.mode==='video'?'Generating videos with '+(batch.spec.video_profile==='base'?'H3-Base':'H3 Turbo'):'Processing images'):'Queued',running.length?running.map(job=>'GPU '+job.gpu+' · item '+(job.index+1)+' · '+(job.stage==='sampling'?job.step+'/'+job.total+' steps':stages[job.stage])).join('; '):'Batch: '+batch.total+(batch.spec.mode==='video'?' videos':' images')+', waiting for an available GPU.');}
+    if(!results.size){const running=batch.jobs.filter(job=>job.gpu!==null&&job.stage!=='done'&&job.stage!=='error');stage(running.length?(batch.spec.mode==='video'?'Generating videos with '+videoLabel(batch.spec.video_profile):'Processing images'):'Queued',running.length?running.map(job=>'GPU '+job.gpu+' · item '+(job.index+1)+' · '+(job.stage==='sampling'?job.step+'/'+job.total+' steps':stages[job.stage])).join('; '):'Batch: '+batch.total+(batch.spec.mode==='video'?' videos':' images')+', waiting for an available GPU.');}
     await sleep(1000,signal);batch=await request('/api/batches/status',{id:batch.id},signal);
   }
 }

@@ -34,13 +34,24 @@ COMMON_MODEL_FILES = {
 MODEL_PROFILES = {
     "fast": {
         "diffusion_models": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "lora": "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
+        "sampler": "res_multistep",
         "steps": 4,
         "label": "H3 Turbo",
     },
     "base": {
         "diffusion_models": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "sampler": "res_multistep",
         "steps": 50,
         "label": "H3-Base",
+    },
+    "pika": {
+        "diffusion_models": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "lora": "pika_h3_flex_fl2va_v1_bf16.safetensors",
+        "sampler": "lcm",
+        "sigmas": "1.0, 0.972973, 0.923077, 0.8, 0.571429, 0.333333, 0.0",
+        "steps": 6,
+        "label": "Pika H3 Flex",
     },
 }
 MODEL_FILES = {
@@ -52,9 +63,13 @@ MODEL_FILES = {
 
 def profile_files(profile):
     files = {**COMMON_MODEL_FILES, "diffusion_models": MODEL_PROFILES[profile]["diffusion_models"]}
-    if profile == "fast":
-        files["loras"] = MODEL_FILES["loras"]
+    if MODEL_PROFILES[profile].get("lora"):
+        files["loras"] = MODEL_PROFILES[profile]["lora"]
     return files
+
+
+def profile_steps(profile):
+    return MODEL_PROFILES[profile]["steps"]
 
 
 def models_ready(profile="fast"):
@@ -108,7 +123,7 @@ def _graph(prompt, source, seed, token, profile):
         "6": {"class_type": "MiniMaxH3ImageToVideo", "inputs": {"clip": link(3), "vae": link(4), "prompt": prompt,
                 "width": width, "height": height, "length": 124, "first_frame": link(1)}},
         "8": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
-        "10": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "res_multistep"}},
+        "10": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": model["sampler"]}},
         "12": {"class_type": "SamplerCustomAdvanced", "inputs": {"noise": link(8), "guider": link(9),
                 "sampler": link(10), "sigmas": link(11), "latent_image": link(6, 1)}},
         "13": {"class_type": "VAEDecode", "inputs": {"samples": link(12), "vae": link(4)}},
@@ -118,13 +133,15 @@ def _graph(prompt, source, seed, token, profile):
         "16": {"class_type": "StudioRAMSaveVideo", "inputs": {"video": link(15), "token": token}},
     }
     model_link = link(2)
-    if profile == "fast":
+    if model.get("lora"):
         graph["7"] = {"class_type": "LoraLoaderModelOnly", "inputs": {
-            "model": link(2), "lora_name": MODEL_FILES["loras"], "strength_model": 1.0}}
+            "model": link(2), "lora_name": model["lora"], "strength_model": 1.0}}
         model_link = link(7)
     graph["9"] = {"class_type": "BasicGuider", "inputs": {"model": model_link, "conditioning": link(6)}}
-    graph["11"] = {"class_type": "BasicScheduler", "inputs": {
-        "model": model_link, "scheduler": "simple", "steps": model["steps"], "denoise": 1.0}}
+    graph["11"] = ({"class_type": "ManualSigmas", "inputs": {"sigmas": model["sigmas"]}}
+                   if model.get("sigmas") else
+                   {"class_type": "BasicScheduler", "inputs": {
+                       "model": model_link, "scheduler": "simple", "steps": model["steps"], "denoise": 1.0}})
     return graph, seed, width, height
 
 

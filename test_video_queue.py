@@ -39,7 +39,7 @@ class FakeVideoRunner:
     def run(self, params, source, progress):
         assert source.startswith(b"fake-jpeg-content-")
         assert params[5] == 30
-        assert params[6] == "base"
+        assert params[6] == "pika"
         self.calls.append((self.gpu, source))
         progress("sampling", 1, 300)
         time.sleep(.05)
@@ -51,7 +51,7 @@ class FakeVideoRunner:
 async def main():
     studio.RUNNER_FACTORY = FakeImageRunner
     studio.H3Runner = FakeVideoRunner
-    studio.models_ready = lambda profile="fast": profile in ("fast", "base")
+    studio.models_ready = lambda profile="fast": profile in ("fast", "base", "pika")
     owner, other, page = ident(), ident(), ident()
     async with studio.app.router.lifespan_context(studio.app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=studio.app),
@@ -74,7 +74,7 @@ async def main():
                                                  "chunk": base64.b64encode(source).decode()})
             spec = dict(id=batch_id, mode="video", prompt="Slow camera pan",
                         width=512, height=512, seed=7, steps=40, duration=30,
-                        video_profile="base",
+                        video_profile="pika",
                         items=[dict(id=job_id, label=f"frame-{index}.jpg", upload_id=upload_id)
                                for index, (job_id, upload_id) in enumerate(zip(job_ids, upload_ids), 1)])
             await post("/api/batches/start", spec)
@@ -86,7 +86,7 @@ async def main():
             else:
                 raise AssertionError("Video job did not finish")
             assert batch["completed"] == 2 and batch["total"] == 2 and batch["spec"]["duration"] == 30
-            assert batch["spec"]["video_profile"] == "base"
+            assert batch["spec"]["video_profile"] == "pika"
             assert {gpu for gpu, _ in FakeVideoRunner.calls} == {0, 1}
             assert {source for _, source in FakeVideoRunner.calls} == set(sources)
             for job_id in job_ids:
@@ -96,7 +96,7 @@ async def main():
                 await post("/api/jobs/result", {"id": job_id}, other, 404)
             await post("/api/tab/clear", {})
             assert not studio.JOBS and not studio.BATCHES
-    print("PASS: two-image video batch, dual-GPU assignment, 30-second settings, MP4 delivery, and tab isolation")
+    print("PASS: two-image Pika H3 Flex batch, dual-GPU assignment, 30-second settings, MP4 delivery, and tab isolation")
 
 
 asyncio.run(main())

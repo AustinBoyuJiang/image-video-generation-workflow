@@ -35,7 +35,7 @@
   },
   "h3": {
     "repo": "Comfy-Org/MiniMax-H3",
-    "revision": "e5eb578a89295337b8ff433a035929ce0279e0b6",
+    "revision": "912b6e38b2092ec4d2e86d24183e0d59ea059d48",
     "weights": {
       "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors": {
         "size": 20970379616,
@@ -44,6 +44,10 @@
       "loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors": {
         "size": 1956192992,
         "sha256": "c396a9a06f58399e9df9754b18299818d84a2ddd371724ba48fe4a41221437dc"
+      },
+      "loras/pika_h3_flex_fl2va_v1_bf16.safetensors": {
+        "size": 1956172304,
+        "sha256": "cc5453aeecd6189468409003fe4cf1b57e52ff3a830a0a154b87decbe07358b7"
       },
       "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors": {
         "size": 15687142551,

@@ -25,7 +25,7 @@ from starlette.concurrency import run_in_threadpool
 ROOT = Path(__file__).resolve().parent
 WEB_ROOT = Path(os.environ.get("STUDIO_WEB_ROOT", ROOT / "web"))
 PORT = int(os.environ.get("Z_IMAGE_PORT", "7860"))
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 TABS, JOBS, UPLOADS, BATCHES = {}, {}, {}, {}
 QUEUE = asyncio.Queue()
 GPU_QUEUES = {}
@@ -36,7 +36,7 @@ GPU_RUNNERS = {}
 VIDEO_RUNNERS = {}
 GPU_IDS = tuple(dict.fromkeys(int(x) for x in os.environ.get("QWEN_GPUS", "0,1").split(",")))
 from gpu_workers import GpuRunner
-from h3_runner import H3Runner, models_ready
+from h3_runner import H3Runner, models_ready, profile_steps
 RUNNER_FACTORY = GpuRunner
 ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{24,80}\Z")
 MAX_QUEUE = 64
@@ -337,8 +337,8 @@ async def privacy(request, call_next):
 
 @app.get("/api/health")
 async def health():
-    return dict(ok=True, version=VERSION, model="Qwen-Image-2.1 + MiniMax-H3", h3_ready=models_ready(),
-                h3_base_ready=models_ready("base"), password=False,
+    return dict(ok=True, version=VERSION, model="Qwen-Image-2.1 + MiniMax-H3 + Pika-H3-Flex", h3_ready=models_ready(),
+                h3_base_ready=models_ready("base"), pika_h3_flex_ready=models_ready("pika"), password=False,
                 queued=sum(j["stage"] == "queued" for j in JOBS.values()), running=sum(v is not None for v in ACTIVE_JOBS.values()),
                 gpus=[dict(gpu=gpu, busy=ACTIVE_JOBS.get(gpu) is not None) for gpu in GPU_IDS])
 
@@ -448,7 +448,7 @@ async def batch_start(request: Request):
             raise ValueError()
         if mode == "video" and (not isinstance(data.get("duration", 5), int) or not 1 <= duration <= 30):
             raise ValueError()
-        if mode == "video" and video_profile not in ("fast", "base"):
+        if mode == "video" and video_profile not in ("fast", "base", "pika"):
             raise ValueError()
         items = data.get("items")
         if not isinstance(items, list) or not 1 <= len(items) <= MAX_BATCH or (mode == "text" and len(items) != 1):
@@ -462,7 +462,7 @@ async def batch_start(request: Request):
     except (ValueError, TypeError):
         raise HTTPException(400, "Invalid prompt, settings, or batch images (maximum 20).") from None
     if mode == "video" and not models_ready(video_profile):
-        raise HTTPException(503, "The selected MiniMax H3 model is not ready. Please retry later.")
+        raise HTTPException(503, "The selected video model is not ready. Please retry later.")
     if sum(j["stage"] == "queued" for j in JOBS.values()) + len(items) > MAX_QUEUE:
         raise HTTPException(429, "Queue is full. Retry the batch later.")
     uploads = []
@@ -487,7 +487,7 @@ async def batch_start(request: Request):
     for index, item in enumerate(items):
         job = dict(id=item["id"], batch_id=ident, owner=owner, index=index, mode=mode,
                    label=item.get("label") or (f"Image {index+1}" if mode != "text" else "Generated image"),
-                   stage="queued", step=0, total=(50 if video_profile == "base" else 4) * math.ceil(duration / 5) if mode == "video" else steps, gpu=None, width=width, height=height,
+                   stage="queued", step=0, total=profile_steps(video_profile) * math.ceil(duration / 5) if mode == "video" else steps, gpu=None, width=width, height=height,
                    created=now, started=None, finished=None, cancelled=False, result=None, delivery=None,
                    params=(prompt, width, height, seed, steps) + ((duration, video_profile) if mode == "video" else ()),
                    source=sources[index] if mode != "text" else None)
