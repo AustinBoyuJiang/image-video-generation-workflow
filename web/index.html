@@ -36,8 +36,8 @@
         <div id="upload-section" hidden>
           <div class="field-label"><span id="upload-caption">Reference images</span><button id="clear-sources" type="button" class="quiet" hidden>Remove all</button></div>
           <label class="upload-zone" id="drop-zone" for="upload">
-            <input id="upload" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
-            <span><b>+</b><span id="upload-action">Choose or drop images</span><small id="upload-limit">PNG, JPG or WebP · 12 MB each</small></span>
+            <input id="upload" type="file" accept="image/*" multiple aria-label="Choose input images">
+            <span><b>+</b><span id="upload-action">Choose or drop images</span><small id="upload-limit">PNG, JPG, WebP or AVIF</small></span>
           </label>
           <p id="source-count" class="field-hint">No images selected</p>
           <div id="source-list" class="source-grid" aria-label="Selected images"></div>
