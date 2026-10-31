@@ -17,7 +17,7 @@
       <a id="new-tab" class="quiet" href="/#new=1" target="_blank" rel="noopener">New tab</a>
       <button id="all-jobs-toggle" class="quiet" type="button" aria-expanded="false" aria-controls="all-jobs-panel">All jobs <span id="all-jobs-count">0</span></button>
       <button id="reconnect" class="quiet" type="button">Reconnect</button>
-      <button id="clear-page" class="quiet" type="button">Clear this tab</button>
+      <button id="clear-page" class="quiet" type="button">Cancel &amp; clear tab</button>
     </div>
   </header>
   <section id="all-jobs-panel" class="all-jobs-panel" aria-label="Active jobs" hidden>
@@ -37,7 +37,7 @@
           <div class="field-label"><span id="upload-caption">Reference images</span><button id="clear-sources" type="button" class="quiet" hidden>Remove all</button></div>
           <label class="upload-zone" id="drop-zone" for="upload">
             <input id="upload" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
-            <span><b>+</b><span id="upload-action">Choose or drop images</span><small id="upload-limit">Up to 20 images, 12 MB each</small></span>
+            <span><b>+</b><span id="upload-action">Choose or drop images</span><small id="upload-limit">No 20-image cap · 12 MB each</small></span>
           </label>
           <p id="source-count" class="field-hint">No images selected</p>
           <div id="source-list" class="source-grid" aria-label="Selected images"></div>
@@ -46,9 +46,9 @@
         <div id="video-settings" hidden>
           <label class="field-label" for="video-profile"><b>Model</b></label>
           <select id="video-profile">
-            <option value="fast" selected>H3 Turbo · fast</option>
+            <option value="fast">H3 Turbo · fast</option>
             <option value="base">H3-Base · 50-step quality</option>
-            <option value="pika">Pika H3 Flex · 6-step</option>
+            <option value="pika" selected>Pika H3 Flex · 6-step</option>
           </select>
           <p class="field-hint">H3 Turbo uses 4 steps. H3-Base uses the official 50-step sampler. Pika H3 Flex uses Pika's official 6-step adapter and synchronized audio.</p>
           <label class="field-label" for="duration"><b>Duration (seconds)</b></label>
@@ -71,10 +71,10 @@
         <button id="generate" type="submit" class="primary generate"><span id="generate-label">Add to queue</span></button>
         <p id="form-error" class="error" role="alert"></p>
       </form>
-      <div class="sidebar-footer"><p>Inputs and results are held in memory. Running jobs continue if the page disconnects. Closed tabs are retained for 24 hours. Clearing this tab removes its batch immediately.</p></div>
+      <div class="sidebar-footer"><p>Inputs and results are held in memory. Running jobs continue if the page disconnects. Closed tabs are retained for 24 hours. Clearing this tab cancels all of its queued and running jobs, then removes the batch.</p></div>
     </aside>
     <section class="canvas-area" aria-label="Output">
-      <div class="canvas-top"><span id="canvas-label">Output</span><div class="canvas-actions"><button id="reuse" class="quiet" disabled>Use as input</button><button id="clear" class="quiet" disabled>Clear this tab</button></div></div>
+      <div class="canvas-top"><span id="canvas-label">Output</span><div class="canvas-actions"><button id="save-batch" class="quiet" disabled>Save batch</button><button id="reuse" class="quiet" disabled>Use as input</button><button id="clear" class="quiet" disabled>Cancel &amp; clear tab</button></div></div>
       <div id="batch-progress" class="batch-progress" hidden role="status"><strong id="batch-summary"></strong><p id="batch-note"></p></div>
       <div class="canvas" id="canvas">
         <div class="empty-state" id="empty-state"><h2>No output yet</h2><p>Select a mode, add the required input, and submit a job.</p></div>
@@ -87,5 +87,12 @@
     </section>
   </main>
 </div>
+<dialog id="crop-dialog" aria-labelledby="crop-title">
+  <div class="crop-dialog-body">
+    <div class="crop-dialog-head"><div><strong id="crop-title">Crop input</strong><p>Drag on the image to select the area to keep.</p></div><button id="crop-close" class="quiet" type="button">Close</button></div>
+    <div class="crop-stage"><canvas id="crop-canvas"></canvas></div>
+    <div class="crop-actions"><button id="crop-reset" class="quiet" type="button">Reset</button><span id="crop-size"></span><button id="crop-cancel" class="quiet" type="button">Cancel</button><button id="crop-apply" class="primary" type="button">Apply crop</button></div>
+  </div>
+</dialog>
 </body>
 </html>

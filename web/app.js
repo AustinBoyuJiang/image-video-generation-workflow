@@ -8,7 +8,7 @@ const newTab=fragment.get('new')==='1';
 let tabId=newTab?opaque():validId(fragment.get('tab'))?fragment.get('tab'):validId(saved.tab)?saved.tab:opaque();
 const pageId=opaque();
 let batchId=newTab?opaque():validId(fragment.get('job'))?fragment.get('job'):validId(saved.job)?saved.job:opaque();
-let mode='text',sources=[],results=new Map(),cards=new Map(),selected=null,activeBatch=null;
+let mode='text',sources=[],results=new Map(),cards=new Map(),retryCrops=new Map(),selected=null,activeBatch=null,cropSession=null;
 let controller=null,busy=false,disposed=false,heartbeating=false,ticker=null,latestSeconds=0,latestAt=performance.now();
 function remember(){const state={tab:tabId,job:batchId};try{sessionStorage.setItem(key,JSON.stringify(state));}catch{}history.replaceState(null,'',location.pathname+location.search+'#'+new URLSearchParams(state));$('job-id').textContent=batchId;}
 remember();
@@ -38,10 +38,12 @@ async function once(path,data,signal,{binary=false,timeout=15000,onBytes=null}={
 async function request(path,data,signal,options={}){let attempts=0;while(true){try{return await once(path,data,signal,options);}catch(error){if(!error.transient)throw error;check(signal);attempts++;const confirmed=!!activeBatch&&activeBatch.id===batchId;statusText(confirmed?'Reconnecting · submitted':'Reconnecting · not submitted');if(busy)stage('Reconnecting',confirmed?'The server accepted batch '+batchId+'; retrying the connection.':'Submission is not confirmed. Inputs remain in this tab.');if(!confirmed&&attempts>=3)throw new Error('Connection failed before the server confirmed the batch. Reconnect and retry.');await sleep(Math.min(500*attempts,5000),signal);}}}
 async function parallel(items,fn,signal,limit=4){let cursor=0;await Promise.all(Array.from({length:Math.min(limit,items.length)},async()=>{while(cursor<items.length){check(signal);const index=cursor++;await fn(items[index],index);}}));}
 function clearResults(){
+  if(cropSession)closeCrop();
   $('result').hidden=true;$('result').removeAttribute('src');for(const result of results.values())URL.revokeObjectURL(result.url);
+  for(const item of retryCrops.values())URL.revokeObjectURL(item.url);
   $('result-video').pause();$('result-video').hidden=true;$('result-video').removeAttribute('src');$('result-video').load();
-  results.clear();cards.clear();selected=null;$('result-list').replaceChildren();$('empty-state').hidden=false;
-  $('reuse').disabled=true;$('clear').disabled=true;$('canvas-label').textContent='Output';$('result-meta').textContent='Qwen-Image-2.1';
+  results.clear();cards.clear();retryCrops.clear();selected=null;$('result-list').replaceChildren();$('empty-state').hidden=false;
+  $('save-batch').disabled=true;$('reuse').disabled=true;$('clear').disabled=true;$('canvas-label').textContent='Output';$('result-meta').textContent='Qwen-Image-2.1';
 }
 function renderSources(){
   $('source-list').replaceChildren();$('source-count').textContent=sources.length?'Selected '+sources.length+' images · same prompt for each '+(mode==='video'?'video':'image'):'Choose multiple images';
@@ -50,20 +52,47 @@ function renderSources(){
     const card=document.createElement('div');card.className='source-card';
     const img=document.createElement('img');img.src=item.url;img.alt='Input image '+(index+1);
     const name=document.createElement('span');name.textContent=item.name;name.title=item.name;
+    const actions=document.createElement('div');actions.className='source-actions';
+    const crop=document.createElement('button');crop.type='button';crop.textContent=item.cropped?'Crop again':'Crop';crop.disabled=busy;crop.setAttribute('aria-label','Crop input image '+(index+1));
+    crop.addEventListener('click',()=>openCrop(item,blob=>{URL.revokeObjectURL(item.url);item.blob=blob;item.url=URL.createObjectURL(blob);item.cropped=true;renderSources();}));
     const remove=document.createElement('button');remove.type='button';remove.textContent='Remove';remove.disabled=busy;remove.setAttribute('aria-label','Remove input image '+(index+1));
-    remove.addEventListener('click',()=>{URL.revokeObjectURL(item.url);sources=sources.filter(other=>other!==item);renderSources();});card.append(img,name,remove);$('source-list').append(card);
+    remove.addEventListener('click',()=>{URL.revokeObjectURL(item.url);sources=sources.filter(other=>other!==item);renderSources();});actions.append(crop,remove);card.append(img,name,actions);$('source-list').append(card);
   }
   if(!selected)$('result-meta').textContent=mode==='video'?videoLabel($('video-profile').value):'Qwen-Image-2.1';
 }
 function clearSources(){for(const item of sources)URL.revokeObjectURL(item.url);sources=[];$('upload').value='';renderSources();}
 function addFiles(files){
   const incoming=Array.from(files);$('form-error').textContent='';if(!incoming.length)return;
-  if(sources.length+incoming.length>20){$('form-error').textContent='A batch supports up to 20 images. Remove some first.';return;}
   if(incoming.some(file=>!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>12*1024*1024)){$('form-error').textContent='Choose PNG, JPG, or WebP images under 12 MB each.';return;}
   for(const file of incoming)sources.push({blob:file,url:URL.createObjectURL(file),name:file.name||'Result image '+(sources.length+1)});
   $('upload').value='';renderSources();if(mode==='text')setMode('image');
 }
-function setMode(next){mode=['text','image','video'].includes(next)?next:'image';for(const name of ['text','image','video']){$(name+'-tab').classList.toggle('selected',name===mode);$(name+'-tab').setAttribute('aria-selected',String(name===mode));}$('upload-section').hidden=mode==='text';$('video-settings').hidden=mode!=='video';$('image-size-settings').hidden=mode==='video';$('image-advanced-settings').hidden=mode==='video';$('upload').multiple=true;$('upload-caption').textContent=mode==='video'?'First-frame images':'Reference images';$('upload-action').textContent='Choose or drop images';$('upload-limit').textContent='Up to 20 images, 12 MB each';$('source-hint').textContent=mode==='video'?'Each image becomes the first frame of a separate video. The same prompt and settings are applied to all videos.':'The same prompt is applied to each image.';$('prompt-caption').textContent=mode==='video'?'Video prompt':'Prompt';$('prompt').placeholder=mode==='video'?'Example: The camera moves closer as the person smiles and turns. Soft ambient sound.':'Example: A cabin by the sea after rain, warm lights, cinematic detail.';renderSources();}
+function cropPoint(event){const canvas=$('crop-canvas'),rect=canvas.getBoundingClientRect();return{x:Math.max(0,Math.min(canvas.width,(event.clientX-rect.left)*canvas.width/rect.width)),y:Math.max(0,Math.min(canvas.height,(event.clientY-rect.top)*canvas.height/rect.height))};}
+function drawCrop(){
+  if(!cropSession)return;const {bitmap,selection}=cropSession,canvas=$('crop-canvas'),context=canvas.getContext('2d');
+  context.clearRect(0,0,canvas.width,canvas.height);context.drawImage(bitmap,0,0,canvas.width,canvas.height);
+  context.save();context.fillStyle='#0f172a99';context.beginPath();context.rect(0,0,canvas.width,canvas.height);context.rect(selection.x,selection.y,selection.w,selection.h);context.fill('evenodd');context.strokeStyle='#fff';context.lineWidth=2;context.setLineDash([7,5]);context.strokeRect(selection.x,selection.y,selection.w,selection.h);context.restore();
+  const width=Math.max(1,Math.round(selection.w*bitmap.width/canvas.width)),height=Math.max(1,Math.round(selection.h*bitmap.height/canvas.height));$('crop-size').textContent=width+' × '+height+' pixels';
+}
+function closeCrop(){if(!cropSession)return;cropSession.bitmap.close();cropSession=null;if($('crop-dialog').open)$('crop-dialog').close();const canvas=$('crop-canvas');canvas.width=canvas.height=0;}
+async function openCrop(item,onApply){
+  try{
+    const bitmap=await createImageBitmap(item.blob),scale=Math.min(1,900/bitmap.width,600/bitmap.height),canvas=$('crop-canvas');
+    canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+    cropSession={bitmap,onApply,selection:{x:0,y:0,w:canvas.width,h:canvas.height},start:null};drawCrop();$('crop-dialog').showModal();
+  }catch(error){$('form-error').textContent='This image could not be opened for cropping.';}
+}
+$('crop-canvas').addEventListener('pointerdown',event=>{if(!cropSession)return;const point=cropPoint(event);cropSession.start=point;cropSession.selection={x:point.x,y:point.y,w:1,h:1};$('crop-canvas').setPointerCapture(event.pointerId);drawCrop();});
+$('crop-canvas').addEventListener('pointermove',event=>{if(!cropSession?.start)return;const point=cropPoint(event),start=cropSession.start;cropSession.selection={x:Math.min(start.x,point.x),y:Math.min(start.y,point.y),w:Math.max(1,Math.abs(point.x-start.x)),h:Math.max(1,Math.abs(point.y-start.y))};drawCrop();});
+$('crop-canvas').addEventListener('pointerup',event=>{if(!cropSession)return;cropSession.start=null;try{$('crop-canvas').releasePointerCapture(event.pointerId);}catch{}drawCrop();});
+$('crop-reset').addEventListener('click',()=>{if(cropSession){const canvas=$('crop-canvas');cropSession.selection={x:0,y:0,w:canvas.width,h:canvas.height};drawCrop();}});
+$('crop-apply').addEventListener('click',async()=>{
+  if(!cropSession)return;const {bitmap,selection,onApply}=cropSession,sx=Math.round(selection.x*bitmap.width/$('crop-canvas').width),sy=Math.round(selection.y*bitmap.height/$('crop-canvas').height),sw=Math.max(1,Math.round(selection.w*bitmap.width/$('crop-canvas').width)),sh=Math.max(1,Math.round(selection.h*bitmap.height/$('crop-canvas').height)),canvas=document.createElement('canvas');
+  canvas.width=sw;canvas.height=sh;const context=canvas.getContext('2d',{alpha:false});context.fillStyle='#fff';context.fillRect(0,0,sw,sh);context.drawImage(bitmap,sx,sy,sw,sh,0,0,sw,sh);const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.95));context.clearRect(0,0,sw,sh);canvas.width=canvas.height=0;if(blob)onApply(blob);closeCrop();
+});
+for(const id of ['crop-close','crop-cancel'])$(id).addEventListener('click',closeCrop);
+$('crop-dialog').addEventListener('cancel',event=>{event.preventDefault();closeCrop();});
+function setMode(next){mode=['text','image','video'].includes(next)?next:'image';for(const name of ['text','image','video']){$(name+'-tab').classList.toggle('selected',name===mode);$(name+'-tab').setAttribute('aria-selected',String(name===mode));}$('upload-section').hidden=mode==='text';$('video-settings').hidden=mode!=='video';$('image-size-settings').hidden=mode==='video';$('image-advanced-settings').hidden=mode==='video';$('upload').multiple=true;$('upload-caption').textContent=mode==='video'?'First-frame images':'Reference images';$('upload-action').textContent='Choose or drop images';$('upload-limit').textContent='No 20-image cap · 12 MB each';$('source-hint').textContent=mode==='video'?'Each image becomes the first frame of a separate video. The same prompt and settings are applied to all videos.':'The same prompt is applied to each image.';$('prompt-caption').textContent=mode==='video'?'Video prompt':'Prompt';$('prompt').placeholder=mode==='video'?'Example: The camera moves closer as the person smiles and turns. Soft ambient sound.':'Example: A cabin by the sea after rain, warm lights, cinematic detail.';renderSources();}
 $('video-tab').addEventListener('click',()=>setMode('video'));
 $('text-tab').addEventListener('click',()=>setMode('text'));$('image-tab').addEventListener('click',()=>setMode('image'));
 $('video-profile').addEventListener('change',renderSources);
@@ -80,7 +109,38 @@ function chooseResult(id){
   const j=result.job;$('result-meta').textContent=(video?(j.stats.model||'MiniMax H3')+' · '+(j.stats.duration||activeBatch?.spec.duration||5)+' s video · ':'Qwen-Image-2.1 · ')+(j.stats.width||j.width)+' × '+(j.stats.height||j.height)+' · GPU '+j.gpu+' · generated in '+j.stats.seconds+' s · received in '+result.seconds.toFixed(2)+' s · seed '+j.stats.seed;
   for(const [key,card]of cards)card.element.classList.toggle('selected-result',key===id);
 }
-function setBusy(value){busy=value;$('generate').disabled=value;$('generate-label').textContent=value?'Processing batch':'Add to queue';$('reuse').disabled=value||!selected||results.get(selected)?.job.mode==='video';renderSources();clearInterval(ticker);if(value)ticker=setInterval(()=>{$('elapsed').value=Math.floor(latestSeconds+(performance.now()-latestAt)/1000)+' s';},1000);}
+function resultFilename(job){return String(job.index+1).padStart(4,'0')+'-'+job.id.slice(0,8)+(job.mode==='video'?'.mp4':'.webp');}
+async function saveBatch(){
+  if(!activeBatch)return;const jobs=activeBatch.jobs.filter(job=>job.stage==='done');if(!jobs.length)return;
+  const button=$('save-batch'),original=button.textContent;button.disabled=true;$('form-error').textContent='';
+  try{
+    if(window.isSecureContext&&typeof window.showDirectoryPicker==='function'){
+      try{
+        const directory=await window.showDirectoryPicker({mode:'readwrite'});let index=0;
+        for(const job of jobs){button.textContent='Saving '+(++index)+' / '+jobs.length;let result=results.get(job.id);if(!result){const blob=await once('/api/jobs/result',{id:job.id},null,{binary:true,timeout:job.mode==='video'?120000:30000});result={blob};}const handle=await directory.getFileHandle(resultFilename(job),{create:true}),writer=await handle.createWritable();await writer.write(result.blob);await writer.close();}
+        return;
+      }catch(error){if(error.name==='AbortError')return;}
+    }
+    button.textContent='Building ZIP';const blob=await once('/api/batches/archive',{id:activeBatch.id},null,{binary:true,timeout:120000}),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download='batch-'+activeBatch.id.slice(0,8)+'.zip';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
+  }catch(error){$('form-error').textContent='Could not save this batch: '+error.message;}
+  finally{button.textContent=original;button.disabled=!activeBatch||!activeBatch.jobs.some(job=>job.stage==='done');}
+}
+$('save-batch').addEventListener('click',saveBatch);
+async function prepareRetryCrop(id,state){
+  try{
+    let item=retryCrops.get(id);
+    if(!item){state.textContent='Loading input';const blob=await once('/api/jobs/source',{id},null,{binary:true,timeout:30000});item={blob,url:URL.createObjectURL(blob),name:'Retry input'};retryCrops.set(id,item);}
+    openCrop(item,blob=>{URL.revokeObjectURL(item.url);item.blob=blob;item.url=URL.createObjectURL(blob);item.cropped=true;state.textContent='Cropped input selected';});
+  }catch(error){$('form-error').textContent='Could not load the retry input: '+error.message;state.textContent='';}
+}
+async function retryImage(id,prompt){
+  if(busy)return;await manage(async signal=>{
+    stage('Preparing retry');const payload={id:opaque(),source_id:id},item=retryCrops.get(id);if(prompt.trim())payload.prompt=prompt.trim();
+    if(item)payload.upload_id=await uploadReference(item,signal,0,1);
+    const batch=await request('/api/jobs/retry',payload,signal);if(item){URL.revokeObjectURL(item.url);retryCrops.delete(id);}activeBatch=batch;await follow(batch,signal);
+  });
+}
+function setBusy(value){busy=value;$('generate').disabled=value;$('generate-label').textContent=value?'Processing batch':'Add to queue';$('reuse').disabled=value||!selected||results.get(selected)?.job.mode==='video';renderSources();if(activeBatch)renderBatch(activeBatch);clearInterval(ticker);if(value)ticker=setInterval(()=>{$('elapsed').value=Math.floor(latestSeconds+(performance.now()-latestAt)/1000)+' s';},1000);}
 const stages={queued:'Queued',loading:'Loading model',preparing:'Preparing image',encoding:'Encoding input',sampling:'Generating',decoding:'Decoding result',packing:'Encoding result',stopping:'Stopping',done:'Done',error:'Failed'};
 let refreshingGlobal=false;
 function renderGlobalJobs(jobs){
@@ -123,14 +183,24 @@ function renderBatch(batch){
       select.append(image,video,placeholder);select.addEventListener('click',()=>chooseResult(job.id));
       const name=document.createElement('strong');name.textContent=(job.index+1)+'. '+job.label;name.title=job.label;
       const status=document.createElement('small');status.className='result-status';
+      const actions=document.createElement('div');actions.className='result-actions';
       const reuse=document.createElement('button');reuse.type='button';reuse.className='quiet';reuse.textContent='Use as input';reuse.disabled=true;reuse.addEventListener('click',()=>addResultAsSource(job.id));
-      element.append(select,name,status,reuse);$('result-list').append(element);card={element,select,image,video,placeholder,status,reuse};cards.set(job.id,card);
+      const retry=document.createElement('button');retry.type='button';retry.className='quiet';retry.textContent='Retry';retry.disabled=true;
+      const retryPanel=document.createElement('div');retryPanel.className='retry-panel';retryPanel.hidden=true;
+      const retryPrompt=document.createElement('textarea');retryPrompt.rows=3;retryPrompt.maxLength=4000;retryPrompt.placeholder='Leave blank to reuse this image’s prompt, or enter a prompt only for the retry.';
+      const retryControls=document.createElement('div');retryControls.className='retry-controls';
+      const cropState=document.createElement('span');cropState.className='retry-crop-state';cropState.textContent='Original input';
+      const crop=document.createElement('button');crop.type='button';crop.className='quiet';crop.textContent='Crop input';crop.addEventListener('click',()=>prepareRetryCrop(job.id,cropState));
+      const submitRetry=document.createElement('button');submitRetry.type='button';submitRetry.className='primary';submitRetry.textContent='Add retry to queue';submitRetry.addEventListener('click',()=>retryImage(job.id,retryPrompt.value));
+      retry.addEventListener('click',()=>{retryPanel.hidden=!retryPanel.hidden;retry.textContent=retryPanel.hidden?'Retry':'Close retry';if(!retryPanel.hidden)retryPrompt.focus();});
+      retryControls.append(cropState,crop,submitRetry);retryPanel.append(retryPrompt,retryControls);actions.append(reuse,retry);element.append(select,name,status,actions,retryPanel);$('result-list').append(element);card={element,select,image,video,placeholder,status,reuse,retry,retryPanel,retryPrompt,crop,submitRetry};cards.set(job.id,card);
     }
     card.status.textContent=(job.gpu!==null?'GPU '+job.gpu+' · ':'')+(job.stage==='sampling'&&job.total?stages[job.stage]+' · '+job.step+' / '+job.total+' steps':job.stage==='queued'?'Ahead: '+job.ahead+' jobs':job.stage==='error'?job.error:stages[job.stage]||job.stage);
     card.element.classList.toggle('result-error',job.stage==='error');
-    const result=results.get(job.id);card.reuse.disabled=!result||busy||job.mode==='video';
+    const result=results.get(job.id);card.reuse.disabled=!result||busy||job.mode==='video';card.retry.hidden=job.mode!=='image';card.retry.disabled=busy||!job.retryable;card.crop.disabled=busy;card.submitRetry.disabled=busy||!job.retryable;
     if(result){if(job.mode==='video'){card.video.src=result.url;card.video.hidden=false;}else{card.image.src=result.url;card.image.hidden=false;}card.placeholder.hidden=true;card.select.disabled=false;}
   }
+  $('save-batch').disabled=!batch.jobs.some(job=>job.stage==='done');
 }
 async function uploadReference(item,signal,index,totalFiles){
   const image=new Image();image.src=item.url;await image.decode();check(signal);
@@ -157,7 +227,7 @@ async function receiveResult(job,signal){
   if(!selected)chooseResult(job.id);
 }
 async function follow(batch,signal){
-  activeBatch=batch;batchId=batch.id;remember();const spec=batch.spec;$('video-profile').value=spec.video_profile||'fast';setMode(spec.mode);$('prompt').value=spec.prompt;$('width').value=String(spec.width);$('height').value=String(spec.height);$('seed').value=String(spec.seed);$('steps').value=String(spec.steps);$('duration').value=String(spec.duration||5);
+  activeBatch=batch;batchId=batch.id;remember();const spec=batch.spec;$('video-profile').value=spec.video_profile||'pika';setMode(spec.mode);$('prompt').value=spec.prompt;$('width').value=String(spec.width);$('height').value=String(spec.height);$('seed').value=String(spec.seed);$('steps').value=String(spec.steps);$('duration').value=String(spec.duration||5);
   while(true){
     check(signal);activeBatch=batch;latestSeconds=batch.seconds;latestAt=performance.now();$('elapsed').value=Math.floor(batch.seconds)+' s';renderBatch(batch);
     const ready=batch.jobs.filter(job=>job.stage==='done'&&!results.has(job.id));await parallel(ready,job=>receiveResult(job,signal),signal,2);renderBatch(batch);
@@ -186,7 +256,7 @@ $('generate-form').addEventListener('submit',event=>{
     const batch=await request('/api/batches/start',spec,signal);spec.prompt='';activeBatch=batch;await follow(batch,signal);
   });
 });
-async function clearPage(){await manage(async signal=>{clearResults();clearSources();$('prompt').value='';$('seed').value='-1';stage('Clearing this tab');await request('/api/tab/clear',{},signal);activeBatch=null;batchId=opaque();remember();$('batch-progress').hidden=true;latestSeconds=0;$('elapsed').value='0 s';});}
+async function clearPage(){await manage(async signal=>{stage('Cancelling this tab’s jobs');await request('/api/tab/clear',{},signal);clearResults();clearSources();$('prompt').value='';$('seed').value='-1';activeBatch=null;batchId=opaque();remember();$('batch-progress').hidden=true;latestSeconds=0;$('elapsed').value='0 s';});}
 $('clear-page').addEventListener('click',clearPage);$('clear').addEventListener('click',clearPage);$('reconnect').addEventListener('click',resume);document.addEventListener('keydown',event=>{if(event.key==='Escape')clearPage();});
 let tabChannel=null,identityReady=false;
 function rotateTabIdentity(){
@@ -212,7 +282,7 @@ function claimTabIdentity(onReady){
   tabChannel.postMessage({type:'probe',tab:tabId,page:pageId});
   setTimeout(()=>{if(!disposed){identityReady=true;onReady();}},350);
 }
-window.addEventListener('pagehide',()=>{disposed=true;if(tabChannel){tabChannel.close();tabChannel=null;}if(controller)controller.abort();clearInterval(ticker);navigator.sendBeacon('/api/tab/detach',new Blob([JSON.stringify({tab_id:tabId,page_id:pageId})],{type:'application/json'}));for(const result of results.values())URL.revokeObjectURL(result.url);for(const item of sources)URL.revokeObjectURL(item.url);});
+window.addEventListener('pagehide',()=>{disposed=true;if(tabChannel){tabChannel.close();tabChannel=null;}if(controller)controller.abort();if(cropSession)closeCrop();clearInterval(ticker);navigator.sendBeacon('/api/tab/detach',new Blob([JSON.stringify({tab_id:tabId,page_id:pageId})],{type:'application/json'}));for(const result of results.values())URL.revokeObjectURL(result.url);for(const item of retryCrops.values())URL.revokeObjectURL(item.url);for(const item of sources)URL.revokeObjectURL(item.url);});
 window.addEventListener('pageshow',event=>{if(event.persisted){disposed=false;clearResults();claimTabIdentity(resume);}});
 setInterval(async()=>{if(disposed||heartbeating)return;heartbeating=true;try{await once('/api/tab/state',{},null,{timeout:5000});}catch{statusText(activeBatch?'Disconnected · submitted':'Disconnected · not submitted');}finally{heartbeating=false;}},20000);
 renderSources();claimTabIdentity(resume);

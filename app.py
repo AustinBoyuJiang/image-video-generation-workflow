@@ -9,6 +9,7 @@ import os
 import re
 import resource
 import time
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -25,7 +26,7 @@ from starlette.concurrency import run_in_threadpool
 ROOT = Path(__file__).resolve().parent
 WEB_ROOT = Path(os.environ.get("STUDIO_WEB_ROOT", ROOT / "web"))
 PORT = int(os.environ.get("Z_IMAGE_PORT", "7860"))
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 TABS, JOBS, UPLOADS, BATCHES = {}, {}, {}, {}
 QUEUE = asyncio.Queue()
 GPU_QUEUES = {}
@@ -39,8 +40,8 @@ from gpu_workers import GpuRunner
 from h3_runner import H3Runner, models_ready, profile_steps
 RUNNER_FACTORY = GpuRunner
 ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{24,80}\Z")
-MAX_QUEUE = 64
-MAX_BATCH = 20
+MAX_QUEUE = 10_000
+MAX_BATCH = 10_000
 TAB_LEASE = 24 * 3600
 CLOSE_GRACE = 24 * 3600
 CHUNK_SIZE = 49152
@@ -97,6 +98,7 @@ def forget_job(ident):
         job["result"] = None
         job["delivery"] = None
         job["source"] = None
+        job["reference"] = None
         job["params"] = None
         gpu = job.get("gpu")
         if ACTIVE_JOBS.get(gpu) == ident and gpu in GPU_RUNNERS:
@@ -126,13 +128,19 @@ def forget_batch(ident):
 
 
 def clear_tab(ident):
+    cancelled = 0
     tab = TABS.get(ident)
     if tab:
+        batch = BATCHES.get(tab.get("job_id"))
+        if batch:
+            cancelled = sum(JOBS.get(job_id, {}).get("stage") not in (None, "done", "error")
+                            for job_id in batch["jobs"])
         forget_batch(tab.get("job_id"))
         tab["job_id"] = None
     for uid, upload in list(UPLOADS.items()):
         if upload["owner"] == ident:
             wipe_upload(uid)
+    return cancelled
 
 
 def tab_session(request):
@@ -168,6 +176,7 @@ def view_job(job):
     position = next((n + 1 for n, j in enumerate(waiting) if j is job), 0)
     return dict(id=job["id"], batch_id=job["batch_id"], index=job["index"], label=job["label"],
                 mode=job.get("mode", "image"),
+                prompt=job.get("prompt"), retryable=job.get("mode") == "image" and job.get("reference") is not None,
                 stage=job["stage"], step=job["step"], total=job["total"], gpu=job["gpu"],
                 position=position, ahead=position - 1 + sum(v is not None for v in ACTIVE_JOBS.values()) if position else 0,
                 width=job["width"], height=job["height"],
@@ -194,6 +203,22 @@ def delivery_bytes(png):
         with io.BytesIO() as buffer:
             image.save(buffer, format="WEBP", lossless=True, method=1)
             return buffer.getvalue()
+
+
+def archive_bytes(batch):
+    """Create a batch archive in RAM. No generated media touches the filesystem."""
+    with io.BytesIO() as buffer:
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
+            for job_id in batch["jobs"]:
+                job = JOBS.get(job_id)
+                if job is None or job["stage"] != "done" or job["delivery"] is None:
+                    continue
+                extension = "mp4" if job.get("mode") == "video" else "webp"
+                info = zipfile.ZipInfo(f"{job['index'] + 1:04d}-{job['id'][:8]}.{extension}")
+                info.date_time = (1980, 1, 1, 0, 0, 0)
+                info.compress_type = zipfile.ZIP_STORED
+                archive.writestr(info, job["delivery"])
+        return buffer.getvalue()
 
 
 async def queue_dispatcher():
@@ -385,8 +410,8 @@ async def tab_detach(request: Request):
 async def tab_clear(request: Request):
     owner, tab = tab_session(request)
     await body(request, 1024)
-    clear_tab(owner)
-    return {"ok": True}
+    cancelled = clear_tab(owner)
+    return {"ok": True, "cancelled": cancelled}
 
 
 @app.post("/api/upload/start")
@@ -434,7 +459,7 @@ async def upload_chunk(request: Request):
 @app.post("/api/batches/start")
 async def batch_start(request: Request):
     owner, tab = tab_session(request)
-    data = await body(request, 24576)
+    data = await body(request, 2 * 1024 * 1024)
     ident = data.get("id")
     if not valid_id(ident):
         raise HTTPException(400, "Invalid batch ID.")
@@ -448,7 +473,7 @@ async def batch_start(request: Request):
         width, height = int(data.get("width", 1024)), int(data.get("height", 1024))
         seed, steps = int(data.get("seed", -1)), int(data.get("steps", 40))
         duration = int(data.get("duration", 5)) if mode == "video" else None
-        video_profile = data.get("video_profile", "fast") if mode == "video" else None
+        video_profile = data.get("video_profile", "pika") if mode == "video" else None
         if mode not in ("text", "image", "video") or not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 4000:
             raise ValueError()
         if any(x < 512 or x > 1536 or x % 16 for x in (width, height)) or not -1 <= seed < 2**32 or not 1 <= steps <= 50:
@@ -467,7 +492,7 @@ async def batch_start(request: Request):
         if any(not isinstance(item.get("label", ""), str) or len(item.get("label", "")) > 160 for item in items):
             raise ValueError()
     except (ValueError, TypeError):
-        raise HTTPException(400, "Invalid prompt, settings, or batch images (maximum 20).") from None
+        raise HTTPException(400, "Invalid prompt, settings, or batch images.") from None
     if mode == "video" and not models_ready(video_profile):
         raise HTTPException(503, "The selected video model is not ready. Please retry later.")
     if sum(j["stage"] == "queued" for j in JOBS.values()) + len(items) > MAX_QUEUE:
@@ -496,8 +521,10 @@ async def batch_start(request: Request):
                    label=item.get("label") or (f"Image {index+1}" if mode != "text" else "Generated image"),
                    stage="queued", step=0, total=profile_steps(video_profile) * math.ceil(duration / 5) if mode == "video" else steps, gpu=None, width=width, height=height,
                    created=now, started=None, finished=None, cancelled=False, result=None, delivery=None,
+                   prompt=prompt, steps=steps,
                    params=(prompt, width, height, seed, steps) + ((duration, video_profile) if mode == "video" else ()),
-                   source=sources[index] if mode != "text" else None)
+                   source=sources[index] if mode != "text" else None,
+                   reference=sources[index] if mode == "image" else None)
         JOBS[job["id"]] = job
         batch["jobs"].append(job["id"])
         QUEUE.put_nowait(job["id"])
@@ -513,11 +540,73 @@ async def batch_status(request: Request):
     return view_batch(find_batch(owner, data.get("id")))
 
 
+@app.post("/api/batches/archive")
+async def batch_archive(request: Request):
+    owner, tab = tab_session(request)
+    data = await body(request, 1024)
+    batch = find_batch(owner, data.get("id"))
+    if not any(JOBS.get(job_id, {}).get("stage") == "done" for job_id in batch["jobs"]):
+        raise HTTPException(409, "This batch has no completed results to save.")
+    payload = await run_in_threadpool(archive_bytes, batch)
+    return Response(payload, media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="batch-{batch["id"][:8]}.zip"',
+        "X-Result-Bytes": str(len(payload))})
+
+
 @app.post("/api/jobs/status")
 async def job_status(request: Request):
     owner, tab = tab_session(request)
     data = await body(request, 1024)
     return view_job(find_job(owner, data.get("id")))
+
+
+@app.post("/api/jobs/source")
+async def job_source(request: Request):
+    owner, tab = tab_session(request)
+    data = await body(request, 1024)
+    job = find_job(owner, data.get("id"))
+    payload = job.get("reference")
+    if job.get("mode") != "image" or payload is None:
+        raise HTTPException(409, "The original editing input is no longer available.")
+    return Response(payload, media_type="image/jpeg", headers={"X-Result-Bytes": str(len(payload))})
+
+
+@app.post("/api/jobs/retry")
+async def job_retry(request: Request):
+    owner, tab = tab_session(request)
+    data = await body(request, 8192)
+    parent = find_job(owner, data.get("source_id"))
+    batch = find_batch(owner, parent["batch_id"])
+    prompt = data.get("prompt", parent.get("prompt"))
+    ident = data.get("id")
+    if (tab.get("job_id") != batch["id"] or parent.get("mode") != "image"
+            or parent.get("reference") is None or parent["stage"] not in ("done", "error")
+            or not valid_id(ident) or ident in JOBS or not isinstance(prompt, str)
+            or not prompt.strip() or len(prompt) > 4000 or len(batch["jobs"]) >= MAX_BATCH):
+        raise HTTPException(400, "This image cannot be retried with the supplied settings.")
+    source = parent["reference"]
+    upload_id = data.get("upload_id")
+    if upload_id is not None:
+        upload = UPLOADS.get(upload_id) if isinstance(upload_id, str) else None
+        if upload is None or upload["owner"] != owner or sum(map(len, upload["chunks"].values())) != upload["total"]:
+            raise HTTPException(400, "The cropped retry input has not finished uploading.")
+        source = b"".join(upload["chunks"][n] for n in range(len(upload["chunks"])))
+    now = time.monotonic()
+    index = len(batch["jobs"])
+    steps = int(parent.get("steps", 40))
+    label = f"{parent['label'][:148]} · retry"
+    job = dict(id=ident, batch_id=batch["id"], owner=owner, index=index, mode="image", label=label,
+               stage="queued", step=0, total=steps, gpu=None, width=parent["width"], height=parent["height"],
+               created=now, started=None, finished=None, cancelled=False, result=None, delivery=None,
+               prompt=prompt.strip(), steps=steps,
+               params=(prompt.strip(), parent["width"], parent["height"], -1, steps),
+               source=source, reference=source)
+    JOBS[ident] = job
+    batch["jobs"].append(ident)
+    QUEUE.put_nowait(ident)
+    if upload_id is not None:
+        wipe_upload(upload_id)
+    return view_batch(batch)
 
 
 @app.post("/api/jobs/active")

@@ -56,12 +56,13 @@ The models are downloaded from their publishers and official ComfyUI repack: [Qw
 ## Use
 
 - **Text to image:** enter a prompt. One image is generated per job.
-- **Image editing:** select up to 20 input images and enter one prompt, applied separately to each image.
-- **Image to video:** select up to 20 first-frame images, enter one motion prompt, choose 1–30 seconds at 24 fps, and select H3 Turbo, H3-Base, or Pika H3 Flex. Each image becomes a separate queued video; two GPUs can process two videos in parallel. Turbo uses the four-step LoRA, H3-Base uses the official 50-step sampler, and Pika H3 Flex uses Pika's official six-step adapter and fixed sampling schedule. All three reuse the same ComfyUI int8-convrot H3 base.
+- **Image editing:** select any practical number of input images and enter one prompt, applied separately to each image. Each input can be cropped in the browser before upload. A completed or failed image can be retried inside the same batch, optionally with a prompt and an additional crop used only for that retry.
+- **Image to video:** select any practical number of first-frame images, enter one motion prompt, choose 1–30 seconds at 24 fps, and select H3 Turbo, H3-Base, or Pika H3 Flex. Pika H3 Flex is the default. Each image becomes a separate queued video; two GPUs can process two videos in parallel. Turbo uses the four-step LoRA, H3-Base uses the official 50-step sampler, and Pika H3 Flex uses Pika's official six-step adapter and fixed sampling schedule. All three reuse the same ComfyUI int8-convrot H3 base.
+- **Save batch:** write completed files directly to a browser-selected local folder when the File System Access API is available; otherwise download a ZIP assembled in server RAM. No archive or generated media file is written on the model server.
 - **New tab:** open an independent workspace. Refreshing a tab recovers its current batch ID. Duplicating a tab gives the copy a new ID.
 - **All jobs:** see queue and GPU status and stop individual jobs.
 
-Qwen images are delivered as lossless WebP and H3 videos as MP4. Image workers start on demand and unload after 300 idle seconds by default, releasing their GPU and host-memory model allocations without clearing browser tabs or completed results. Set `GPU_IDLE_UNLOAD_SECONDS` to change the timeout (minimum 30 seconds). The browser stores only opaque tab and batch IDs in the URL fragment and `sessionStorage`. Inputs and results are held in process memory; H3 uses `/dev/shm` for its temporary ComfyUI directories. Running jobs continue if the page disconnects, and closed tabs retain completed batches for 24 hours. **Clear this tab** removes that tab's batch immediately. The application has no account system and should not be exposed directly to a public network.
+Qwen images are delivered as lossless WebP and H3 videos as MP4. Image workers start on demand and unload after 300 idle seconds by default, releasing their GPU and host-memory model allocations without clearing browser tabs or completed results. Set `GPU_IDLE_UNLOAD_SECONDS` to change the timeout (minimum 30 seconds). The browser stores only opaque tab and batch IDs in the URL fragment and `sessionStorage`. Inputs, retry references, and results are held in process memory; H3 uses `/dev/shm` for its temporary ComfyUI directories. Running jobs continue if the page disconnects, and closed tabs retain completed batches for 24 hours. **Cancel & clear tab** stops that tab's queued and running jobs and removes its in-memory inputs and results immediately. The application has no account system and should not be exposed directly to a public network.
 
 ## Verify
 
@@ -72,6 +73,7 @@ The queue tests use fake GPU workers and do not download models or create media 
 .venv/bin/python test_task_control.py
 .venv/bin/python test_video_queue.py
 .venv/bin/python test_h3_profiles.py
+.venv/bin/python test_idle_unload.py
 curl http://127.0.0.1:7860/api/health
 ```
 

@@ -8,6 +8,7 @@ import random
 import threading
 import time
 import uuid
+import zipfile
 
 import httpx
 from PIL import Image
@@ -51,7 +52,7 @@ async def main():
     async with studio.app.router.lifespan_context(studio.app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=studio.app),base_url='http://localhost:7860') as client:
             def headers(tab,page):return {'Origin':'http://localhost:64251','X-Studio-Tab':tab,'X-Studio-Page':page}
-            a,b,c=ident(),ident(),ident();pa,pb,pc=ident(),ident(),ident();ha,hb,hc=headers(a,pa),headers(b,pb),headers(c,pc)
+            a,b,c,d=ident(),ident(),ident(),ident();pa,pb,pc,pd=ident(),ident(),ident(),ident();ha,hb,hc,hd=headers(a,pa),headers(b,pb),headers(c,pc),headers(d,pd)
             async def post(path,data,h=ha,code=200):
                 response=await client.post(path,json=data,headers=h)
                 assert response.status_code==code,(path,response.status_code,response.text)
@@ -102,6 +103,7 @@ async def main():
             # All results survive refresh; binary and multiple chunks reproduce exact pixels.
             assert (await post('/api/tab/state',{},ha)).json()['batch']['completed']==3
             job=finished['jobs'][0]
+            assert job['retryable'] and job['prompt']=='hold'
             payload=(await post('/api/jobs/result',{'id':job['id']},ha)).content
             with Image.open(io.BytesIO(payload)) as image:assert image.convert('RGB').tobytes()==pixels
             assert len(payload)>studio.CHUNK_SIZE*2
@@ -109,6 +111,29 @@ async def main():
             for offset in range(0,len(payload),studio.CHUNK_SIZE):
                 part=(await post('/api/jobs/result-chunk',{'id':job['id'],'offset':offset},ha)).json();parts.append(base64.b64decode(part['chunk']))
             assert b''.join(parts)==payload
+            # A single editing input can be retried in the same batch with its own prompt.
+            assert (await post('/api/jobs/source',{'id':job['id']},ha)).content==refs[0]
+            retry_id=ident();retry=(await post('/api/jobs/retry',{'id':retry_id,'source_id':job['id'],'prompt':'special retry'},ha)).json()
+            assert retry['total']==4 and retry['jobs'][-1]['prompt']=='special retry'
+            retried=await wait_for(bid,ha,lambda s:s['stage']=='done' and s['total']==4)
+            assert any(prompt=='special retry' and source==refs[0] for _,prompt,source in calls)
+            # A retry may replace its source with a browser-cropped upload.
+            cropped=await upload(b'cropped-source',ha);cropped_id=ident()
+            cropped_batch=(await post('/api/jobs/retry',{'id':cropped_id,'source_id':job['id'],'upload_id':cropped['upload_id']},ha)).json()
+            assert cropped_batch['total']==5 and cropped['upload_id'] not in studio.UPLOADS
+            retried=await wait_for(bid,ha,lambda s:s['stage']=='done' and s['total']==5)
+            assert any(source==b'cropped-source' for _,_,source in calls)
+            assert (await post('/api/jobs/source',{'id':cropped_id},ha)).content==b'cropped-source'
+            # The complete batch is packaged in RAM as a standard ZIP archive.
+            archive=(await post('/api/batches/archive',{'id':bid},ha)).content
+            with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+                assert len(bundle.namelist())==5 and all(name.endswith('.webp') for name in bundle.namelist())
+                assert all(bundle.read(name)==payload for name in bundle.namelist())
+            # The former 20-image cap is gone.
+            many=[await upload(bytes([n]),hd) for n in range(21)];many_id=ident()
+            await post('/api/batches/start',dict(spec,id=many_id,prompt='many',items=many),hd)
+            many_done=await wait_for(many_id,hd,lambda s:s['stage']=='done')
+            assert many_done['total']==21 and many_done['completed']==21
             # Atomic validation: one missing image must not consume any of the valid uploads.
             valid=await upload(b'd',ha);bad=ident();count=len(studio.JOBS)
             await post('/api/batches/start',dict(spec,id=bad,prompt='edit',items=[valid,{'id':ident(),'upload_id':ident()}]),ha,400)
@@ -121,7 +146,7 @@ async def main():
             ci=ident();next_item=await upload(b'z',hc)
             await post('/api/batches/start',dict(spec,id=ci,prompt='next',items=[next_item]),hc)
             assert (await batch_state(ci,hc))['queued']==1
-            await post('/api/tab/clear',{},hb)
+            cleared=(await post('/api/tab/clear',{},hb)).json();assert cleared['cancelled']==2
             await wait_for(ci,hc,lambda s:s['stage']=='done')
             await post('/api/batches/status',{'id':bi},hb,404)
             assert peak[0]==2
@@ -132,8 +157,8 @@ async def main():
             assert partial['completed']==1 and partial['failed']==1
             foreign=headers(a,ident());foreign['Origin']='https://example.com'
             await post('/api/tab/clear',{},foreign,403)
-            for h in (ha,hb,hc):await post('/api/tab/clear',{},h)
+            for h in (ha,hb,hc,hd):await post('/api/tab/clear',{},h)
             assert not studio.JOBS and not studio.BATCHES and not studio.UPLOADS
-            print('PASS: two independent GPU slots; FIFO batches; same prompt and separate inputs; idempotency; refresh of all child jobs/results; tab isolation; atomic batch validation; parallel upload; lossless binary/chunk transfer; cancellation on both GPUs; failure isolation; memory cleanup; origin protection')
+            print('PASS: dual GPU FIFO; unlimited image count; same-prompt batch; per-image retry and prompt override; cropped retry source; RAM ZIP; refresh; isolation; cancellation; failure cleanup; origin protection')
 
 asyncio.run(main())

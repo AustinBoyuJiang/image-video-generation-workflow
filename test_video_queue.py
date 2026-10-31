@@ -74,7 +74,6 @@ async def main():
                                                  "chunk": base64.b64encode(source).decode()})
             spec = dict(id=batch_id, mode="video", prompt="Slow camera pan",
                         width=512, height=512, seed=7, steps=40, duration=30,
-                        video_profile="pika",
                         items=[dict(id=job_id, label=f"frame-{index}.jpg", upload_id=upload_id)
                                for index, (job_id, upload_id) in enumerate(zip(job_ids, upload_ids), 1)])
             await post("/api/batches/start", spec)
@@ -96,7 +95,7 @@ async def main():
                 await post("/api/jobs/result", {"id": job_id}, other, 404)
             await post("/api/tab/clear", {})
             assert not studio.JOBS and not studio.BATCHES
-    print("PASS: two-image Pika H3 Flex batch, dual-GPU assignment, 30-second settings, MP4 delivery, and tab isolation")
+    print("PASS: Pika H3 Flex is the default; two-image batch, dual-GPU assignment, 30-second settings, MP4 delivery, and tab isolation")
 
 
 asyncio.run(main())
